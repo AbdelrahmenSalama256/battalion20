@@ -80,6 +80,8 @@ async function runMigrations() {
   } catch (e) {}
   await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS last_leave_end DATE");
   await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS enlistment_date DATE");
+  await pool.query("CREATE TABLE IF NOT EXISTS sections (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), key VARCHAR(50) UNIQUE NOT NULL, name VARCHAR(100) NOT NULL, icon VARCHAR(10), sort_order INT DEFAULT 0)");
+  try { await pool.query("INSERT INTO sections (key,name,icon,sort_order) VALUES ('specialties','التخصصات','🎯',1),('general','العام','📋',2),('fitness','اللياقة','💪',3),('shooting','الرماية','🔫',4),('discipline','الانضباط','🎖️',5) ON CONFLICT (key) DO NOTHING"); } catch (e) {}
   console.log("Migrations done");
 }
 
@@ -280,6 +282,16 @@ er.patch("/profile", auth, async (req, res) => {
   }
 });
 app.use("/api/auth", er);
+
+// SECTIONS
+const sc = express.Router();
+sc.get("/", auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM sections ORDER BY sort_order");
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.use("/api/sections", sc);
 
 // SOLDIERS
 const sl = express.Router();
