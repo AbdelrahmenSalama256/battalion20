@@ -113,6 +113,7 @@ html { scroll-behavior: smooth; }
 .sidebar::-webkit-scrollbar { width: 6px; }
 .sidebar::-webkit-scrollbar-track { background: #0A0F07; }
 .sidebar::-webkit-scrollbar-thumb { background: #C9A84C; border-radius: 3px; }
+.modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:1050; }
 @media (max-width: 768px) {
   ::-webkit-scrollbar { width: 6px; height: 6px; }
 }

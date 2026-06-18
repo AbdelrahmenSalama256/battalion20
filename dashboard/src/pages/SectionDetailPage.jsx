@@ -18,6 +18,9 @@ export default function SectionDetailPage({ user, specialties, soldiers }) {
   const [stats, setStats] = useState(null);
   const [sectionSoldiers, setSectionSoldiers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showAddSpecialty, setShowAddSpecialty] = useState(false);
+  const [newSpec, setNewSpec] = useState({ name: '', weaponId: '' });
+  const [weapons, setWeapons] = useState([]);
 
   useEffect(() => {
     loadData();
@@ -67,7 +70,7 @@ export default function SectionDetailPage({ user, specialties, soldiers }) {
         <div className="d-flex justify-content-between align-items-center mb-3">
           <h4 className="text-gold mb-0">{meta.icon} {meta.name}</h4>
           {user?.role === 'commander' && (
-            <button onClick={() => {}} className="btn btn-gold btn-sm">+ إضافة تخصص</button>
+            <button onClick={() => { setShowAddSpecialty(true); api.getWeapons().then(setWeapons).catch(() => {}); }} className="btn btn-gold btn-sm">+ إضافة تخصص</button>
           )}
         </div>
         <div className="row g-2">
@@ -89,6 +92,36 @@ export default function SectionDetailPage({ user, specialties, soldiers }) {
             <div className="col-12 text-center text-muted-military p-4">لا توجد تخصصات</div>
           )}
         </div>
+        {showAddSpecialty && (
+          <div className="modal-overlay" onClick={() => setShowAddSpecialty(false)}>
+            <div className="modal-content p-4" onClick={e => e.stopPropagation()} style={{maxWidth:'400px',margin:'auto'}}>
+              <h5 className="text-gold mb-3">إضافة تخصص جديد</h5>
+              <div className="mb-2">
+                <label className="small text-muted-military">اسم التخصص</label>
+                <input className="form-control form-control-sm bg-dark text-light border-military" value={newSpec.name} onChange={e => setNewSpec({...newSpec,name:e.target.value})} />
+              </div>
+              <div className="mb-3">
+                <label className="small text-muted-military">السلاح</label>
+                <select className="form-select form-select-sm bg-dark text-light border-military" value={newSpec.weaponId} onChange={e => setNewSpec({...newSpec,weaponId:e.target.value})}>
+                  <option value="">بدون سلاح</option>
+                  {weapons.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+              <div className="d-flex gap-2">
+                <button className="btn btn-gold btn-sm flex-grow-1" onClick={async () => {
+                  if (!newSpec.name) return;
+                  try {
+                    await api.createSpecialty({ name: newSpec.name, weaponId: newSpec.weaponId || null });
+                    setShowAddSpecialty(false);
+                    setNewSpec({ name: '', weaponId: '' });
+                    window.location.reload();
+                  } catch(e) { alert(e.message); }
+                }}>حفظ</button>
+                <button className="btn btn-outline-secondary btn-sm" onClick={() => setShowAddSpecialty(false)}>إلغاء</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

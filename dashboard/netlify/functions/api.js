@@ -82,6 +82,11 @@ async function runMigrations() {
   await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS enlistment_date DATE");
   await pool.query("CREATE TABLE IF NOT EXISTS sections (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), key VARCHAR(50) UNIQUE NOT NULL, name VARCHAR(100) NOT NULL, icon VARCHAR(10), sort_order INT DEFAULT 0)");
   try { await pool.query("INSERT INTO sections (key,name,icon,sort_order) VALUES ('specialties','التخصصات','🎯',1),('general','العام','📋',2),('fitness','اللياقة','💪',3),('shooting','الرماية','🔫',4),('discipline','الانضباط','🎖️',5) ON CONFLICT (key) DO NOTHING"); } catch (e) {}
+  await pool.query("CREATE TABLE IF NOT EXISTS evaluations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, section_key VARCHAR(50) NOT NULL, specialty_id UUID REFERENCES specialties(id), score NUMERIC(5,2) NOT NULL, max_score NUMERIC(5,2) DEFAULT 100, notes TEXT, evaluated_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())");
+  await pool.query("CREATE TABLE IF NOT EXISTS distinctions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, section_key VARCHAR(50) NOT NULL, specialty_id UUID REFERENCES specialties(id), reason TEXT NOT NULL, color VARCHAR(20) DEFAULT 'gold', given_by UUID REFERENCES users(id), is_confirmed BOOLEAN DEFAULT FALSE, confirmation_count INT DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW())");
+  await pool.query("CREATE TABLE IF NOT EXISTS punishments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, section_key VARCHAR(50) NOT NULL, specialty_id UUID REFERENCES specialties(id), reason TEXT NOT NULL, color VARCHAR(20) DEFAULT 'red', given_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())");
+  await pool.query("CREATE TABLE IF NOT EXISTS distinction_confirmations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), distinction_id UUID NOT NULL, user_id UUID REFERENCES users(id), confirmed_at TIMESTAMPTZ DEFAULT NOW())");
+  try { await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_distinction_confirmations_unique ON distinction_confirmations(distinction_id, user_id)"); } catch (e) {}
   console.log("Migrations done");
 }
 
@@ -331,7 +336,14 @@ sl.get("/:id", auth, async (req, res) => {
       [req.params.id],
     );
     if (!rows.length) return res.status(404).json({ error: "غير موجود" });
-    res.json(rows[0]);
+    const [evals, dists, puns, stats, sps] = await Promise.all([
+      pool.query("SELECT e.*,u.name evaluated_by_name FROM evaluations e LEFT JOIN users u ON u.id=e.evaluated_by WHERE e.soldier_id=$1 ORDER BY e.created_at DESC", [req.params.id]),
+      pool.query("SELECT d.*,u.name given_by_name FROM distinctions d LEFT JOIN users u ON u.id=d.given_by WHERE d.soldier_id=$1 ORDER BY d.created_at DESC", [req.params.id]),
+      pool.query("SELECT p.*,u.name given_by_name FROM punishments p LEFT JOIN users u ON u.id=p.given_by WHERE p.soldier_id=$1 ORDER BY p.created_at DESC", [req.params.id]),
+      pool.query("SELECT section_key,ROUND(AVG(score),1) avg_score,COUNT(*) eval_count,MAX(score) max_score,MIN(score) min_score FROM evaluations WHERE soldier_id=$1 GROUP BY section_key", [req.params.id]),
+      pool.query("SELECT sp.id,sp.name,sp.description FROM specialties sp WHERE sp.id=$1", [rows[0]?.specialty_id || null]),
+    ]);
+    res.json({ ...rows[0], evaluations: evals.rows, distinctions: dists.rows, punishments: puns.rows, sectionStats: stats.rows, specialties: sps.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -500,6 +512,121 @@ sl.post("/:id/evaluate", auth, async (req, res) => {
 });
 app.use("/api/soldiers", sl);
 
+// EVALUATIONS
+const ev = express.Router();
+ev.get("/", auth, async (req, res) => {
+  try {
+    const { section_key, soldier_id, page, limit } = req.query;
+    let sql = "SELECT e.*,u.name evaluated_by_name,sp.name specialty_name FROM evaluations e LEFT JOIN users u ON u.id=e.evaluated_by LEFT JOIN specialties sp ON sp.id=e.specialty_id WHERE 1=1";
+    const p = []; let i = 1;
+    if (section_key) { sql += ` AND e.section_key=$${i}`; p.push(section_key); i++; }
+    if (soldier_id) { sql += ` AND e.soldier_id=$${i}`; p.push(soldier_id); i++; }
+    sql += " ORDER BY e.created_at DESC";
+    if (page && limit) { const off = (parseInt(page)-1)*parseInt(limit); sql += ` LIMIT $${i} OFFSET $${i+1}`; p.push(parseInt(limit), off); }
+    const { rows } = await pool.query(sql, p);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+ev.get("/soldier/:soldierId", auth, async (req, res) => {
+  try {
+    const { section_key, specialty_id } = req.query;
+    let sql = "SELECT e.*,u.name evaluated_by_name,sp.name specialty_name FROM evaluations e LEFT JOIN users u ON u.id=e.evaluated_by LEFT JOIN specialties sp ON sp.id=e.specialty_id WHERE e.soldier_id=$1";
+    const p = [req.params.soldierId]; let i = 2;
+    if (section_key) { sql += ` AND e.section_key=$${i}`; p.push(section_key); i++; }
+    if (specialty_id) { sql += ` AND e.specialty_id=$${i}`; p.push(specialty_id); i++; }
+    sql += " ORDER BY e.created_at DESC";
+    const { rows } = await pool.query(sql, p);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+ev.get("/stats/:sectionKey", auth, async (req, res) => {
+  try {
+    const { specialtyId } = req.query;
+    let sql = "SELECT COUNT(*) total_soldiers,ROUND(AVG(score),1) avg_score,COUNT(*) total_evals,MAX(score) max_score FROM evaluations WHERE section_key=$1";
+    const p = [req.params.sectionKey];
+    if (specialtyId) { sql += " AND specialty_id=$2"; p.push(specialtyId); }
+    const { rows } = await pool.query(sql, p);
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+ev.post("/", auth, async (req, res) => {
+  try {
+    const { soldier_id, section_key, specialty_id, score, max_score, notes } = req.body;
+    if (!soldier_id || !section_key || score==null) return res.status(400).json({ error: "missing fields" });
+    const { rows } = await pool.query("INSERT INTO evaluations(soldier_id,section_key,specialty_id,score,max_score,notes,evaluated_by)VALUES($1,$2,$3,$4,$5,$6,$7)RETURNING *", [soldier_id, section_key, specialty_id||null, score, max_score||100, notes||null, req.user.id]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.use("/api/evaluations", ev);
+
+// DISTINCTIONS
+const di = express.Router();
+di.get("/soldier/:soldierId", auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT d.*,u.name given_by_name FROM distinctions d LEFT JOIN users u ON u.id=d.given_by WHERE d.soldier_id=$1 ORDER BY d.created_at DESC", [req.params.soldierId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+di.post("/", auth, async (req, res) => {
+  try {
+    const { soldier_id, section_key, specialty_id, reason, color } = req.body;
+    if (!soldier_id || !reason) return res.status(400).json({ error: "missing fields" });
+    const { rows } = await pool.query("INSERT INTO distinctions(soldier_id,section_key,specialty_id,reason,color,given_by)VALUES($1,$2,$3,$4,$5,$6)RETURNING *", [soldier_id, section_key||'general', specialty_id||null, reason, color||'gold', req.user.id]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+di.post("/:id/confirm", auth, async (req, res) => {
+  try {
+    const { rows: existing } = await pool.query("SELECT * FROM distinction_confirmations WHERE distinction_id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+    if (existing.length) return res.json({ message: "تم التأكيد مسبقاً" });
+    await pool.query("INSERT INTO distinction_confirmations(distinction_id,user_id)VALUES($1,$2)", [req.params.id, req.user.id]);
+    const { rows: cnt } = await pool.query("SELECT COUNT(*)::int count FROM distinction_confirmations WHERE distinction_id=$1", [req.params.id]);
+    const confirmed = cnt[0].count >= 2;
+    await pool.query("UPDATE distinctions SET confirmation_count=$1,is_confirmed=$2 WHERE id=$3", [cnt[0].count, confirmed, req.params.id]);
+    res.json({ count: cnt[0].count, is_confirmed: confirmed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+di.get("/:id/confirmations", auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT dc.*,u.name user_name FROM distinction_confirmations dc LEFT JOIN users u ON u.id=dc.user_id WHERE dc.distinction_id=$1", [req.params.id]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+di.delete("/:id", auth, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM distinction_confirmations WHERE distinction_id=$1", [req.params.id]);
+    const { rowCount } = await pool.query("DELETE FROM distinctions WHERE id=$1", [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: "غير موجود" });
+    res.json({ message: "تم الحذف" });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.use("/api/distinctions", di);
+
+// PUNISHMENTS
+const pu = express.Router();
+pu.get("/soldier/:soldierId", auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT p.*,u.name given_by_name FROM punishments p LEFT JOIN users u ON u.id=p.given_by WHERE p.soldier_id=$1 ORDER BY p.created_at DESC", [req.params.soldierId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+pu.post("/", auth, async (req, res) => {
+  try {
+    const { soldier_id, section_key, specialty_id, reason, color } = req.body;
+    if (!soldier_id || !reason) return res.status(400).json({ error: "missing fields" });
+    const { rows } = await pool.query("INSERT INTO punishments(soldier_id,section_key,specialty_id,reason,color,given_by)VALUES($1,$2,$3,$4,$5,$6)RETURNING *", [soldier_id, section_key||'general', specialty_id||null, reason, color||'red', req.user.id]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+pu.delete("/:id", auth, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query("DELETE FROM punishments WHERE id=$1", [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: "غير موجود" });
+    res.json({ message: "تم الحذف" });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.use("/api/punishments", pu);
+
 // WEAPONS & SPECIALTIES & RANKS
 const wp = express.Router();
 wp.get("/", auth, async (req, res) => {
@@ -539,12 +666,9 @@ const sp = express.Router();
 sp.get("/", auth, async (req, res) => {
   try {
     const { weaponId } = req.query;
-    const { rows } = weaponId
-      ? await db.query(
-          "SELECT * FROM specialties WHERE weapon_id=$1 ORDER BY name",
-          [weaponId],
-        )
-      : await db.query("SELECT * FROM specialties ORDER BY name");
+    const sql = "SELECT sp.*,(SELECT COUNT(*) FROM soldiers s WHERE s.specialty_id=sp.id)::int as soldier_count FROM specialties sp" + (weaponId ? " WHERE sp.weapon_id=$1" : "") + " ORDER BY sp.name";
+    const params = weaponId ? [weaponId] : [];
+    const { rows } = await db.query(sql, params);
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -562,6 +686,24 @@ sp.post("/", auth, commanderOnly, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+sp.get("/:id", auth, async (req, res) => {
+  try {
+    const { rows: spec } = await db.query("SELECT sp.*,(SELECT COUNT(*) FROM soldiers s WHERE s.specialty_id=sp.id)::int as soldier_count FROM specialties sp WHERE sp.id=$1", [req.params.id]);
+    if (!spec.length) return res.status(404).json({ error: "غير موجود" });
+    const { rows: soldiers } = await pool.query("SELECT s.id,s.name,s.status,r.name rank_name,ROUND(AVG(res.total_score),1) avg_score,COUNT(res.id) eval_count,s.created_at assigned_at FROM soldiers s LEFT JOIN ranks r ON r.id=s.rank_id LEFT JOIN results res ON res.soldier_id=s.id WHERE s.specialty_id=$1 GROUP BY s.id,r.name ORDER BY s.name", [req.params.id]);
+    const totalSoldiers = soldiers.length;
+    const avgScore = soldiers.length ? soldiers.reduce((a,b)=>a+(Number(b.avg_score)||0),0)/soldiers.length : 0;
+    res.json({ ...spec[0], soldiers, stats: { total_soldiers: totalSoldiers, total_evals: soldiers.reduce((a,b)=>a+(b.eval_count||0),0), avg_score: avgScore ? Math.round(avgScore*10)/10 : null } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+sp.put("/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { name, weaponId, description } = req.body;
+    const { rows } = await pool.query("UPDATE specialties SET name=$1,weapon_id=$2,description=$3 WHERE id=$4 RETURNING *", [name, weaponId||null, description||null, req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 sp.delete("/:id", auth, commanderOnly, async (req, res) => {
   try {
@@ -1030,11 +1172,13 @@ an.get("/", auth, async (req, res) => {
 });
 an.post("/", auth, async (req, res) => {
   try {
-    const { title, body, priority } = req.body;
+    const { title, body, priority: rawPriority } = req.body;
     if (!title) return res.status(400).json({ error: "يرجى إدخال العنوان" });
+    const allowedPriority = ['urgent','info','normal'];
+    const priority = allowedPriority.includes(rawPriority) ? rawPriority : 'normal';
     const { rows } = await db.query(
       "INSERT INTO announcements(title,body,priority,created_by)VALUES($1,$2,$3,$4)RETURNING *",
-      [title, body || null, priority || "normal", req.user.id],
+      [title, body || null, priority, req.user.id],
     );
     // Notify commander
     await db.query("INSERT INTO notifications(type,message,evaluator_name)VALUES('announcement',$1,$2)", [`إعلان جديد: ${title}`, req.user.name]);
@@ -1043,6 +1187,24 @@ an.post("/", auth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+an.get("/:id", auth, async (req, res) => {
+  try {
+    const { rows } = await db.query("SELECT a.*,u.name created_by_name FROM announcements a LEFT JOIN users u ON u.id=a.created_by WHERE a.id=$1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+an.put("/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { title, body, priority: rawPriority } = req.body;
+    if (!title) return res.status(400).json({ error: "يرجى إدخال العنوان" });
+    const allowedPriority = ['urgent','info','normal'];
+    const priority = allowedPriority.includes(rawPriority) ? rawPriority : 'normal';
+    const { rows } = await db.query("UPDATE announcements SET title=$1,body=$2,priority=$3 WHERE id=$4 RETURNING *", [title, body||null, priority, req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 an.delete("/:id", auth, commanderOnly, async (req, res) => {
   try {
@@ -1100,6 +1262,18 @@ app.use("/api/push", ps);
 
 // LEAVES
 const lv = express.Router();
+lv.get("/", auth, async (req, res) => {
+  try {
+    const { soldier_id, status } = req.query;
+    let sql = "SELECT l.*,s.name soldier_name,s.military_number FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE 1=1";
+    const params = []; let i = 1;
+    if (soldier_id) { sql += ` AND l.soldier_id=$${i}`; params.push(soldier_id); i++; }
+    if (status) { sql += ` AND l.status=$${i}`; params.push(status); i++; }
+    sql += " ORDER BY l.created_at DESC";
+    const { rows } = await pool.query(sql, params);
+    res.json({ leaves: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 lv.get("/dashboard", auth, async (req, res) => {
   try {
     const total = await pool.query("SELECT COUNT(*) FROM soldiers WHERE is_active=TRUE");
@@ -1131,7 +1305,7 @@ lv.get("/overdue-return", auth, async (req, res) => {
 });
 lv.get("/needing-leave", auth, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT s.id,s.name,s.military_number,s.status as soldier_status,r.name as rank_name,COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as last_leave,CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as days_since_leave FROM soldiers s LEFT JOIN ranks r ON s.rank_id=r.id WHERE s.is_active=TRUE AND (s.status IS DISTINCT FROM 'إجازة') HAVING CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date)>21 ORDER BY days_since_leave DESC");
+    const { rows } = await pool.query("SELECT * FROM (SELECT s.id,s.name,s.military_number,s.status as soldier_status,r.name as rank_name,COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as last_leave,CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as days_since_leave FROM soldiers s LEFT JOIN ranks r ON s.rank_id=r.id WHERE s.is_active=TRUE AND (s.status IS DISTINCT FROM 'إجازة')) sub WHERE days_since_leave>21 ORDER BY days_since_leave DESC");
     res.json({ soldiers: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
