@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import { api } from './api';
 import { requestNotifPermission, showBrowserNotif, playNotifSound } from './utils/notifications';
 import { registerPush } from './utils/push';
@@ -77,32 +76,25 @@ export default function App() {
     }
   }, [token]);
 
-  // Socket.io for real-time push notifications
-  useEffect(() => {
-    if (!authed || !u) return;
-    const url = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
-    const sock = io(url, {
-      query: { userId: u.id },
-      transports: ['websocket', 'polling'],
-    });
-    sock.on('notification', (n) => {
-      setData(d => ({ ...d, notifications: [n, ...d.notifications] }));
-      showBrowserNotif(n.title || 'إشعار جديد', n.message || '', n.type === 'evaluation' ? '📋' : n.type === 'distinction' ? '⭐' : n.type === 'punishment' ? '⚠️' : '📢');
-      playNotifSound();
-    });
-    sock.on('connect_error', () => {});
-    return () => sock.close();
-  }, [authed, u]);
-
-  // Polling fallback every 15s
+  // Poll notifications every 10s
   useEffect(() => {
     if (!authed) return;
+    let prev = 0;
     const iv = setInterval(async () => {
       try {
         const n = await api.getNotifications();
-        setData(d => ({ ...d, notifications: n.notifications || [] }));
+        const list = n.notifications || [];
+        setData(d => ({ ...d, notifications: list }));
+        if (list.length > prev) {
+          const latest = list[0];
+          if (latest && !latest.is_read) {
+            showBrowserNotif('إشعار جديد', latest.message || '', latest.type === 'evaluation' ? '📋' : latest.type === 'distinction' ? '⭐' : '📢');
+            playNotifSound();
+          }
+        }
+        prev = list.length;
       } catch (e) { /* ignore */ }
-    }, 15000);
+    }, 10000);
     return () => clearInterval(iv);
   }, [authed]);
 
