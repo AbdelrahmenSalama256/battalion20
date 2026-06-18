@@ -682,7 +682,9 @@ sp.post("/", auth, commanderOnly, async (req, res) => {
       "INSERT INTO specialties(name,weapon_id)VALUES($1,$2)RETURNING *",
       [req.body.name, req.body.weaponId || null],
     );
-    res.status(201).json(rows[0]);
+    const spec = rows[0];
+    const { rows: count } = await pool.query("SELECT COUNT(*)::int as soldier_count FROM soldiers WHERE specialty_id=$1", [spec.id]);
+    res.status(201).json({ ...spec, soldier_count: count[0].soldier_count });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1165,24 +1167,24 @@ an.get("/", auth, async (req, res) => {
     const { rows } = await db.query(
       "SELECT a.*,u.name created_by_name FROM announcements a LEFT JOIN users u ON u.id=a.created_by ORDER BY a.created_at DESC",
     );
-    res.json(rows);
+    res.json(rows.map(r => ({ ...r, content: r.body })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 an.post("/", auth, async (req, res) => {
   try {
-    const { title, body, priority: rawPriority } = req.body;
+    const { title, body, content, priority: rawPriority } = req.body;
     if (!title) return res.status(400).json({ error: "يرجى إدخال العنوان" });
     const allowedPriority = ['urgent','info','normal'];
     const priority = allowedPriority.includes(rawPriority) ? rawPriority : 'normal';
+    const text = body || content || null;
     const { rows } = await db.query(
       "INSERT INTO announcements(title,body,priority,created_by)VALUES($1,$2,$3,$4)RETURNING *",
-      [title, body || null, priority, req.user.id],
+      [title, text, priority, req.user.id],
     );
-    // Notify commander
     await db.query("INSERT INTO notifications(type,message,evaluator_name)VALUES('announcement',$1,$2)", [`إعلان جديد: ${title}`, req.user.name]);
-    await pushAllUsers(`إعلان جديد: ${title}`, body || title);
+    await pushAllUsers(`إعلان جديد: ${title}`, text || title);
     res.status(201).json(rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1197,11 +1199,12 @@ an.get("/:id", auth, async (req, res) => {
 });
 an.put("/:id", auth, commanderOnly, async (req, res) => {
   try {
-    const { title, body, priority: rawPriority } = req.body;
+    const { title, body, content, priority: rawPriority } = req.body;
     if (!title) return res.status(400).json({ error: "يرجى إدخال العنوان" });
     const allowedPriority = ['urgent','info','normal'];
     const priority = allowedPriority.includes(rawPriority) ? rawPriority : 'normal';
-    const { rows } = await db.query("UPDATE announcements SET title=$1,body=$2,priority=$3 WHERE id=$4 RETURNING *", [title, body||null, priority, req.params.id]);
+    const text = body || content || null;
+    const { rows } = await db.query("UPDATE announcements SET title=$1,body=$2,priority=$3 WHERE id=$4 RETURNING *", [title, text, priority, req.params.id]);
     if (!rows.length) return res.status(404).json({ error: "غير موجود" });
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1345,7 +1348,7 @@ nt.get("/", auth, async (req, res) => {
     const { rows } = await db.query(
       "SELECT * FROM notifications ORDER BY created_at DESC LIMIT 50",
     );
-    res.json(rows);
+    res.json({ notifications: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

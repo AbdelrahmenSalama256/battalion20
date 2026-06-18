@@ -21,9 +21,9 @@ export default function AnnouncementsPage({ user }) {
   const canManage = user?.role === 'commander';
 
   const priorityStyles = {
-    high: { bg: 'bg-danger', label: 'عاجل' },
+    urgent: { bg: 'bg-danger', label: 'عاجل' },
     normal: { bg: 'bg-primary', label: 'عادي' },
-    low: { bg: 'bg-secondary', label: 'منخفض' },
+    info: { bg: 'bg-secondary', label: 'منخفض' },
   };
 
   return (
@@ -52,7 +52,7 @@ export default function AnnouncementsPage({ user }) {
                         <h6 className="text-gold mb-0">{a.title}</h6>
                         <span className={`badge ${ps.bg}`} style={{ fontSize: '0.6rem' }}>{ps.label}</span>
                       </div>
-                      <p className="small text-light mb-1" style={{ whiteSpace: 'pre-wrap' }}>{a.content}</p>
+                      <p className="small text-light mb-1" style={{ whiteSpace: 'pre-wrap' }}>{a.body || a.content}</p>
                       <div className="small text-muted-military">
                         بواسطة: {a.created_by_name || '-'} | {new Date(a.created_at).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </div>
@@ -83,12 +83,12 @@ export default function AnnouncementsPage({ user }) {
 
 function AnnouncementForm({ announcement, onClose, onSaved }) {
   const [title, setTitle] = useState(announcement.title || '');
-  const [content, setContent] = useState(announcement.content || '');
+  const [body, setBody] = useState(announcement.body || announcement.content || '');
   const [priority, setPriority] = useState(announcement.priority || 'normal');
 
   async function save() {
     try {
-      const data = { title, content, priority };
+      const data = { title, body, priority };
       if (announcement.id) {
         await api.updateAnnouncement(announcement.id, data);
       } else {
@@ -104,16 +104,16 @@ function AnnouncementForm({ announcement, onClose, onSaved }) {
       <h5 className="text-gold mb-3">{announcement.id ? 'تعديل إعلان' : 'إضافة إعلان'}</h5>
       <input placeholder="العنوان" value={title} onChange={e => setTitle(e.target.value)}
         className="form-control bg-card text-light border-military mb-2" />
-      <textarea placeholder="المحتوى" value={content} onChange={e => setContent(e.target.value)}
+      <textarea placeholder="المحتوى" value={body} onChange={e => setBody(e.target.value)}
         className="form-control bg-card text-light border-military mb-2" rows={5} />
       <select value={priority} onChange={e => setPriority(e.target.value)}
         className="form-select bg-card text-light border-military mb-3">
-        <option value="high">عاجل</option>
+        <option value="urgent">عاجل</option>
         <option value="normal">عادي</option>
-        <option value="low">منخفض</option>
+        <option value="info">منخفض</option>
       </select>
       <div className="d-flex gap-2">
-        <button onClick={save} disabled={!title || !content} className="btn btn-gold flex-grow-1">نشر</button>
+        <button onClick={save} disabled={!title || !body} className="btn btn-gold flex-grow-1">نشر</button>
         <button onClick={onClose} className="btn btn-outline-secondary flex-grow-1">إلغاء</button>
       </div>
     </Modal>
