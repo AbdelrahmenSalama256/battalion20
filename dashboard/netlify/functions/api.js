@@ -80,6 +80,10 @@ async function runMigrations() {
   } catch (e) {}
   await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS last_leave_end DATE");
   await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS enlistment_date DATE");
+  await pool.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS focus_points TEXT[] DEFAULT '{}'");
+  await pool.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS max_score NUMERIC(5,2) DEFAULT 100");
+  await pool.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS notes TEXT");
+  await pool.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS section_key VARCHAR(50)");
   await pool.query("CREATE TABLE IF NOT EXISTS sections (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), key VARCHAR(50) UNIQUE NOT NULL, name VARCHAR(100) NOT NULL, icon VARCHAR(10), sort_order INT DEFAULT 0)");
   try { await pool.query("INSERT INTO sections (key,name,icon,sort_order) VALUES ('specialties','التخصصات','🎯',1),('general','العام','📋',2),('fitness','اللياقة','💪',3),('shooting','الرماية','🔫',4),('discipline','الانضباط','🎖️',5) ON CONFLICT (key) DO NOTHING"); } catch (e) {}
   await pool.query("CREATE TABLE IF NOT EXISTS evaluations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, section_key VARCHAR(50) NOT NULL, specialty_id UUID REFERENCES specialties(id), score NUMERIC(5,2) NOT NULL, max_score NUMERIC(5,2) DEFAULT 100, notes TEXT, evaluated_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())");
@@ -781,35 +785,27 @@ ex.get("/:id", auth, async (req, res) => {
 });
 ex.post("/", auth, async (req, res) => {
   try {
-    const { title, type, weaponId, specialtyId, items } = req.body;
-    if (!title || !items?.length)
-      return res.status(400).json({ error: "يرجى إدخال البيانات" });
-    const exam = await db.query(
-      "INSERT INTO exams(title,type,weapon_id,specialty_id,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *",
-      [
-        title,
-        type || "general",
-        weaponId || null,
-        specialtyId || null,
-        req.user.id,
-      ],
+    const { title, sectionKey, type, weaponId, specialtyId, focusPoints, items, notes, maxScore } = req.body;
+    if (!title) return res.status(400).json({ error: "يرجى إدخال البيانات" });
+    const examType = sectionKey || type || "general";
+    const { rows } = await db.query(
+      "INSERT INTO exams(title,type,weapon_id,specialty_id,focus_points,max_score,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+      [title, examType, weaponId || null, specialtyId || null, focusPoints || null, maxScore || 100, notes || null, req.user.id],
     );
-    for (const item of items)
-      await db.query(
-        "INSERT INTO exam_items(exam_id,text,max_score,sort_order) VALUES($1,$2,$3,$4)",
-        [exam.rows[0].id, item.text, item.maxScore || 10, item.sortOrder || 0],
-      );
-    res.status(201).json(exam.rows[0]);
+    if (items?.length) for (const item of items)
+      await db.query("INSERT INTO exam_items(exam_id,text,max_score,sort_order) VALUES($1,$2,$3,$4)", [rows[0].id, item.text, item.maxScore || 10, item.sortOrder || 0]);
+    res.status(201).json(rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 ex.put("/:id", auth, async (req, res) => {
   try {
-    const { title, type, weaponId } = req.body;
+    const { title, sectionKey, type, weaponId, specialtyId, focusPoints, notes, maxScore } = req.body;
+    const examType = sectionKey || type || "general";
     const { rows } = await db.query(
-      "UPDATE exams SET title=$1,type=$2,weapon_id=$3 WHERE id=$4 RETURNING *",
-      [title, type, weaponId || null, req.params.id],
+      "UPDATE exams SET title=$1,type=$2,weapon_id=$3,specialty_id=$4,focus_points=$5,max_score=$6,notes=$7 WHERE id=$8 RETURNING *",
+      [title, examType, weaponId || null, specialtyId || null, focusPoints || null, maxScore || 100, notes || null, req.params.id],
     );
     if (!rows.length) return res.status(404).json({ error: "غير موجود" });
     res.json(rows[0]);
