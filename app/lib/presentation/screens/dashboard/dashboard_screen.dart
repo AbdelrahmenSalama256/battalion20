@@ -20,7 +20,7 @@ import '../settings/settings_screen.dart';
 import '../profile/profile_screen.dart';
 import '../evaluations/evaluation_form_screen.dart';
 import '../notifications/notifications_screen.dart';
-import '../sections/sections_screen.dart';
+import '../sections/section_detail_screen.dart';
 import '../personnel/personnel_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -64,10 +64,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final allTabs = <_TabItem>[
       _TabItem('الرئيسية', Icons.dashboard_outlined, Icons.dashboard, 'dashboard'),
       _TabItem('الأفراد', Icons.people_outline, Icons.people, 'soldiers'),
-      _TabItem('الأقسام', Icons.grid_view_outlined, Icons.grid_view, 'sections'),
-      _TabItem('المستخدمين', Icons.manage_accounts_outlined, Icons.manage_accounts, 'users'),
       _TabItem('الإشعارات', Icons.notifications_outlined, Icons.notifications, 'notifications'),
-      _TabItem('الملف الشخصي', Icons.person_outline, Icons.person, 'profile'),
+      _TabItem('المستخدمين', Icons.manage_accounts_outlined, Icons.manage_accounts, 'users'),
+      _TabItem('حسابي', Icons.person_outline, Icons.person, 'profile'),
     ];
 
     final tabs = allTabs.where((t) => pageAllowed(t.id)).toList();
@@ -78,6 +77,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(tabs[_currentIndex].label, style: TextStyle(fontSize: 18.sp)),
         centerTitle: true,
         actions: [
+          BlocBuilder<NotificationsCubit, NotificationsState>(
+            builder: (ctx, state) {
+              final unread = state is NotificationsLoaded ? state.unreadCount : 0;
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.notifications_outlined, color: const Color(AC.textSecondary), size: 22.r),
+                    onPressed: () => _jumpToTab('notifications', tabs),
+                  ),
+                  if (unread > 0)
+                    Positioned(
+                      top: 6.h, left: 6.w,
+                      child: Container(
+                        padding: EdgeInsets.all(4.r),
+                        decoration: const BoxDecoration(color: Color(AC.danger), shape: BoxShape.circle),
+                        child: Text('$unread', style: TextStyle(fontSize: 9.sp, color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
           if (_currentIndex == 0)
             IconButton(
               icon: Icon(Icons.tune, color: const Color(AC.textSecondary), size: 20.r),
@@ -133,7 +155,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     switch (id) {
       case 'dashboard': return _buildDashboardTab();
       case 'soldiers': return const SoldiersScreen();
-      case 'sections': return const SectionsScreen();
       case 'users': return const UsersScreen();
       case 'notifications': return const NotificationsScreen();
       case 'profile': return _buildProfileTab();
@@ -163,6 +184,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ],
     );
+  }
+
+  void _jumpToTab(String id, List<_TabItem> tabsList) {
+    final idx = tabsList.indexWhere((t) => t.id == id);
+    if (idx >= 0) setState(() => _currentIndex = idx);
   }
 
   void _confirmLogout() {
@@ -230,6 +256,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildSectionsGrid() {
+    const sections = [
+      {'key': 'specialties', 'name': 'التخصصات', 'icon': Icons.track_changes},
+      {'key': 'general', 'name': 'العام', 'icon': Icons.assignment},
+      {'key': 'fitness', 'name': 'اللياقة', 'icon': Icons.fitness_center},
+      {'key': 'shooting', 'name': 'الرماية', 'icon': Icons.sports_martial_arts},
+      {'key': 'discipline', 'name': 'الانضباط', 'icon': Icons.gavel},
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('الأقسام', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.bold, color: const Color(AC.textPrimary))),
+        SizedBox(height: 8.h),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 10.h,
+            crossAxisSpacing: 10.w,
+            childAspectRatio: 1.5,
+          ),
+          itemCount: sections.length,
+          itemBuilder: (ctx, idx) {
+            final s = sections[idx];
+            return _DashboardSectionCard(
+              keyKey: s['key'] as String,
+              name: s['name'] as String,
+              icon: s['icon'] as IconData,
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   // ─── Dashboard Tab ──────────────────────────────────
   Widget _buildDashboardTab() {
     return BlocBuilder<DashboardCubit, DashboardState>(
@@ -252,6 +314,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildSummaryGrid(stats),
+                SizedBox(height: 16.h),
+                _buildSectionsGrid(),
                 SizedBox(height: 16.h),
                 _buildDistributionCard(stats.distribution),
                 SizedBox(height: 16.h),
@@ -452,6 +516,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+}
+
+class _DashboardSectionCard extends StatelessWidget {
+  final String keyKey;
+  final String name;
+  final IconData icon;
+  const _DashboardSectionCard({super.key, required this.keyKey, required this.name, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SectionDetailScreen(sectionKey: keyKey))),
+      borderRadius: BorderRadius.circular(12.r),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(AC.card),
+          borderRadius: BorderRadius.circular(12.r),
+          border: Border.all(color: const Color(AC.cardBorder)),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: const Color(AC.gold), size: 28.r),
+              SizedBox(height: 6.h),
+              Text(name, style: TextStyle(fontSize: 14.sp, color: const Color(AC.textPrimary), fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _TabItem {
