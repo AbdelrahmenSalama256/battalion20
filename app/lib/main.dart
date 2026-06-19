@@ -15,6 +15,7 @@ import 'presentation/cubits/announcements/announcements_cubit.dart';
 import 'presentation/cubits/fitness/fitness_cubit.dart';
 import 'presentation/cubits/notifications/notifications_cubit.dart';
 import 'presentation/cubits/evaluation/evaluation_cubit.dart';
+import 'presentation/cubits/theme/theme_cubit.dart';
 import 'presentation/screens/login/login_screen.dart';
 import 'presentation/screens/dashboard/dashboard_screen.dart';
 
@@ -50,34 +51,39 @@ class BattalionApp extends StatelessWidget {
             BlocProvider(create: (_) => FitnessCubit(_api)),
             BlocProvider(create: (_) => NotificationsCubit(_api)),
             BlocProvider(create: (_) => EvaluationCubit(_api)),
+            BlocProvider(create: (_) => ThemeCubit()),
           ],
-          child: MaterialApp(
-            title: AC.appName,
-            theme: AppTheme.darkTheme,
-            debugShowCheckedModeBanner: false,
-            locale: const Locale('ar'),
-            supportedLocales: const [Locale('ar')],
-            localizationsDelegates: const [
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
-            home: BlocBuilder<AuthCubit, AuthState>(
-              builder: (ctx, state) {
-                if (state is AuthAuthenticated) {
-                  return const DashboardScreen();
-                }
-                if (state is AuthLoading || state is AuthInitial) {
-                  return Scaffold(
-                    body: Center(
-                      child: CircularProgressIndicator(
-                        color: const Color(AC.gold),
+          child: BlocBuilder<ThemeCubit, ThemeMode>(
+            builder: (ctx, themeMode) => MaterialApp(
+              title: AC.appName,
+              theme: AppTheme.lightTheme,
+              darkTheme: AppTheme.darkTheme,
+              themeMode: themeMode,
+              debugShowCheckedModeBanner: false,
+              locale: const Locale('ar'),
+              supportedLocales: const [Locale('ar')],
+              localizationsDelegates: const [
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              home: BlocBuilder<AuthCubit, AuthState>(
+                builder: (ctx, state) {
+                  if (state is AuthAuthenticated) {
+                    return const DashboardScreen();
+                  }
+                  if (state is AuthLoading || state is AuthInitial) {
+                    return Scaffold(
+                      body: Center(
+                        child: CircularProgressIndicator(
+                          color: const Color(AC.gold),
+                        ),
                       ),
-                    ),
-                  );
-                }
-                return const LoginScreen();
-              },
+                    );
+                  }
+                  return const LoginScreen();
+                },
+              ),
             ),
           ),
         ),

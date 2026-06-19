@@ -6,6 +6,11 @@ class AC {
   static const String fontFamily = 'Tajawal';
 
   static const int gold = 0xFFC9A84C;
+  static const int bgLight = 0xFFF8F9FA;
+  static const int cardLight = 0xFFFFFFFF;
+  static const int cardBorderLight = 0xFFE0E0E0;
+  static const int textPrimaryLight = 0xFF212529;
+  static const int textSecondaryLight = 0xFF6C757D;
   static const int bg = 0xFF0A0F07;
   static const int card = 0xFF111A0A;
   static const int cardBorder = 0xFF1E2D14;

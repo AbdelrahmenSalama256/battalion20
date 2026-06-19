@@ -6,8 +6,9 @@ import '../../cubits/dashboard/dashboard_cubit.dart';
 import '../../cubits/soldiers/soldiers_cubit.dart';
 import '../../cubits/users/users_cubit.dart';
 import '../../cubits/notifications/notifications_cubit.dart';
-import '../../cubits/evaluation/evaluation_cubit.dart';
+import '../../cubits/theme/theme_cubit.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/theme/route_transitions.dart';
 import '../../../data/models/dashboard_stats_model.dart';
 import '../../widgets/score_badge.dart';
 import '../soldiers/soldiers_screen.dart';
@@ -19,6 +20,8 @@ import '../settings/settings_screen.dart';
 import '../profile/profile_screen.dart';
 import '../evaluations/evaluation_form_screen.dart';
 import '../notifications/notifications_screen.dart';
+import '../sections/sections_screen.dart';
+import '../personnel/personnel_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -61,7 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final allTabs = <_TabItem>[
       _TabItem('الرئيسية', Icons.dashboard_outlined, Icons.dashboard, 'dashboard'),
       _TabItem('الأفراد', Icons.people_outline, Icons.people, 'soldiers'),
-      _TabItem('التقييم', Icons.assignment_turned_in_outlined, Icons.assignment_turned_in, 'evaluation'),
+      _TabItem('الأقسام', Icons.grid_view_outlined, Icons.grid_view, 'sections'),
       _TabItem('المستخدمين', Icons.manage_accounts_outlined, Icons.manage_accounts, 'users'),
       _TabItem('الإشعارات', Icons.notifications_outlined, Icons.notifications, 'notifications'),
       _TabItem('الملف الشخصي', Icons.person_outline, Icons.person, 'profile'),
@@ -93,7 +96,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
         ],
       ),
-      body: IndexedStack(index: _currentIndex, children: screens),
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        child: IndexedStack(key: ValueKey(_currentIndex), index: _currentIndex, children: screens),
+      ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           border: Border(top: BorderSide(color: const Color(AC.cardBorder), width: 0.5)),
@@ -106,7 +112,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               final id = tabs[i].id;
               if (id == 'dashboard') context.read<DashboardCubit>().loadStats();
               if (id == 'soldiers') context.read<SoldiersCubit>().loadSoldiers();
-              if (id == 'evaluation') context.read<EvaluationCubit>().init();
               if (id == 'users') context.read<UsersCubit>().loadUsers();
             }
           },
@@ -128,12 +133,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
     switch (id) {
       case 'dashboard': return _buildDashboardTab();
       case 'soldiers': return const SoldiersScreen();
-      case 'evaluation': return const EvaluationFormScreen();
+      case 'sections': return const SectionsScreen();
       case 'users': return const UsersScreen();
       case 'notifications': return const NotificationsScreen();
-      case 'profile': return const ProfileScreen();
+      case 'profile': return _buildProfileTab();
       default: return const SizedBox();
     }
+  }
+
+  Widget _buildProfileTab() {
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        const ProfileScreen(),
+        const Divider(height: 1),
+        BlocBuilder<ThemeCubit, ThemeMode>(
+          builder: (ctx, mode) => SwitchListTile(
+            title: Text(
+              mode == ThemeMode.dark ? 'الوضع النهاري' : 'الوضع الليلي',
+              style: TextStyle(fontSize: 15.sp, color: const Color(AC.textPrimary)),
+            ),
+            secondary: Icon(
+              mode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode,
+              color: const Color(AC.gold),
+            ),
+            value: mode == ThemeMode.dark,
+            onChanged: (_) => ctx.read<ThemeCubit>().toggle(),
+          ),
+        ),
+      ],
+    );
   }
 
   void _confirmLogout() {
@@ -172,6 +201,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             if (pageAllowed('exams')) _quickActionItem(ctx, 'الامتحانات', Icons.assignment_outlined, () => _pushWithAppBar(const ExamsScreen(), 'الامتحانات')),
             if (pageAllowed('results')) _quickActionItem(ctx, 'النتائج', Icons.grading_outlined, () => _pushWithAppBar(const ResultsScreen(), 'النتائج')),
             if (pageAllowed('announcements')) _quickActionItem(ctx, 'الإعلانات', Icons.campaign_outlined, () => _pushWithAppBar(const AnnouncementsScreen(), 'الإعلانات')),
+            _quickActionItem(ctx, 'مكتب الأفراد', Icons.business_outlined, () => _pushWithAppBar(const PersonnelOfficeScreen(), 'مكتب الأفراد')),
+            _quickActionItem(ctx, 'تقييم سريع', Icons.assignment_turned_in_outlined, () => _pushWithAppBar(const EvaluationFormScreen(), 'تقييم سريع')),
             if (pageAllowed('users')) _quickActionItem(ctx, 'المستخدمين', Icons.manage_accounts_outlined, () => _pushWithAppBar(const UsersScreen(), 'المستخدمين')),
             if (pageAllowed('settings')) _quickActionItem(ctx, 'الإعدادات', Icons.settings_outlined, () => _pushWithAppBar(const SettingsScreen(), 'الإعدادات')),
             SizedBox(height: 8.h),
@@ -183,7 +214,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _pushWithAppBar(Widget body, String title) {
     Navigator.pop(context);
-    Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+    Navigator.push(context, fadeSlideRoute(Scaffold(
       appBar: AppBar(title: Text(title, style: TextStyle(fontSize: 18.sp)), centerTitle: true),
       body: body,
     )));

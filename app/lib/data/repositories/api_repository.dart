@@ -221,7 +221,7 @@ class ApiRepository {
   // ─── Notifications ───
   Future<List<NotificationModel>> getNotifications() async {
     final res = await _api.get('/notifications');
-    final list = (res.data as List?) ?? [];
+    final list = (res.data is Map ? (res.data['notifications'] as List?) : res.data as List?) ?? [];
     final notifications =
         list.map((e) => NotificationModel.fromJson(e)).toList();
     await _cacheNotifications(notifications);
@@ -305,6 +305,90 @@ class ApiRepository {
 
   Future<void> seedDemoData() async {
     await _api.post('/admin/seed');
+  }
+
+  // ─── Sections ───
+  Future<List<Map<String, dynamic>>> getSections() async {
+    final res = await _api.get('/sections');
+    return List<Map<String, dynamic>>.from(res.data);
+  }
+
+  Future<Map<String, dynamic>?> getSectionStats(String sectionKey, {String? specialtyId}) async {
+    try {
+      final params = <String, dynamic>{};
+      if (specialtyId != null) params['specialtyId'] = specialtyId;
+      final res = await _api.get('/evaluations/stats/$sectionKey', params: params);
+      return res.data as Map<String, dynamic>?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ─── Punishments ───
+  Future<List<Map<String, dynamic>>> getPunishments(String soldierId) async {
+    final res = await _api.get('/punishments/soldier/$soldierId');
+    return List<Map<String, dynamic>>.from(res.data);
+  }
+
+  Future<void> createPunishment(Map<String, dynamic> data) async {
+    await _api.post('/punishments', data: data);
+  }
+
+  // ─── Leaves / Personnel ───
+  Future<Map<String, dynamic>> getLeavesDashboard() async {
+    final res = await _api.get('/leaves/dashboard');
+    return res.data as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> getActiveLeaves() async {
+    final res = await _api.get('/leaves/active');
+    return List<Map<String, dynamic>>.from(res.data['leaves'] ?? []);
+  }
+
+  Future<List<Map<String, dynamic>>> getOverdueReturns() async {
+    final res = await _api.get('/leaves/overdue-return');
+    return List<Map<String, dynamic>>.from(res.data['leaves'] ?? []);
+  }
+
+  Future<List<Map<String, dynamic>>> getSoldiersNeedingLeave() async {
+    final res = await _api.get('/leaves/needing-leave');
+    return List<Map<String, dynamic>>.from(res.data['soldiers'] ?? []);
+  }
+
+  Future<Map<String, dynamic>> createLeave(Map<String, dynamic> data) async {
+    final res = await _api.post('/leaves', data: data);
+    return res.data as Map<String, dynamic>;
+  }
+
+  Future<void> confirmReturn(String leaveId) async {
+    await _api.patch('/leaves/$leaveId/confirm-return');
+  }
+
+  Future<void> cancelLeave(String leaveId) async {
+    await _api.patch('/leaves/$leaveId/cancel');
+  }
+
+  // ─── Distinctions ───
+  Future<List<Map<String, dynamic>>> getDistinctions(String soldierId) async {
+    try {
+      final res = await _api.get('/distinctions/soldier/$soldierId');
+      return List<Map<String, dynamic>>.from(res.data);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> createDistinction(Map<String, dynamic> data) async {
+    await _api.post('/distinctions', data: data);
+  }
+
+  // ─── Soldier Evaluations ───
+  Future<List<Map<String, dynamic>>> getSoldierEvaluations(String soldierId, {String? sectionKey, String? specialtyId}) async {
+    final params = <String, dynamic>{};
+    if (sectionKey != null) params['section_key'] = sectionKey;
+    if (specialtyId != null) params['specialty_id'] = specialtyId;
+    final res = await _api.get('/evaluations/soldier/$soldierId', params: params);
+    return List<Map<String, dynamic>>.from(res.data);
   }
 
   // ═══════════════════════════════════════════
