@@ -15,6 +15,10 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
   max: 5,
   connectionTimeoutMillis: 3000,
+  query_timeout: 5000,
+});
+pool.on("error", (err) => {
+  console.error("POOL ERROR:", err?.message || err);
 });
 const db = { query: (text, params) => pool.query(text, params), pool };
 
@@ -145,6 +149,9 @@ async function canEvaluate(userId, soldierId) {
   return ur.rows[0].sort_order > sr.rows[0].sort_order;
 }
 
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION:", err?.message || err);
+});
 const app = express();
 app.use(helmet());
 app.use(
@@ -164,8 +171,11 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/api/ping", (req, res) =>
+  res.json({ ok: true, time: Date.now() })
+);
 app.get("/api/health", (req, res) =>
-  res.json({ ok: true, time: new Date().toISOString() }),
+  res.json({ status: "ok", timestamp: new Date().toISOString() })
 );
 app.get("/api", (req, res) =>
   res.json({ ok: true, name: "Battalion 20 API", version: "3.0.0" }),
