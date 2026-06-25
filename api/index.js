@@ -1508,15 +1508,20 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "حدث خطأ غير متوقع" });
 });
 
-let cachedHandler;
-exports.handler = async (event, context) => {
-  if (!cachedHandler) {
-    try {
-      await runMigrations();
-    } catch (e) {
-      console.error("Migration:", e.message);
+if (process.env.VERCEL === '1') {
+  runMigrations().catch(e => console.error("Migration:", e.message));
+  module.exports = app;
+} else {
+  let cachedHandler;
+  exports.handler = async (event, context) => {
+    if (!cachedHandler) {
+      try {
+        await runMigrations();
+      } catch (e) {
+        console.error("Migration:", e.message);
+      }
+      cachedHandler = serverless(app);
     }
-    cachedHandler = serverless(app);
-  }
-  return cachedHandler(event, context);
-};
+    return cachedHandler(event, context);
+  };
+}
