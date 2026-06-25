@@ -59,7 +59,7 @@ class _EvaluationFormScreenState extends State<EvaluationFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('تقييم فرد', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold, color: const Color(AC.gold))),
+            Text('تمييز فرد', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold, color: const Color(AC.gold))),
             SizedBox(height: 4.h),
             Text('اختر الفرد ثم حدد الدرجات', style: TextStyle(fontSize: 14.sp, color: const Color(AC.textSecondary))),
             SizedBox(height: 16.h),
@@ -213,7 +213,7 @@ class _EvaluationFormScreenState extends State<EvaluationFormScreen> {
             ),
             child: submitting
                 ? SizedBox(width: 20.r, height: 20.r, child: CircularProgressIndicator(strokeWidth: 2.r, color: const Color(AC.bg)))
-                : Text('تسجيل التقييم', style: TextStyle(fontSize: 16.sp)),
+                : Text('تسجيل التمييز', style: TextStyle(fontSize: 16.sp)),
           ),
         );
       },
@@ -229,7 +229,7 @@ class _EvaluationFormScreenState extends State<EvaluationFormScreen> {
           children: [
             Icon(Icons.check_circle_outline, size: 72.r, color: const Color(AC.success)),
             SizedBox(height: 16.h),
-            Text('تم تسجيل التقييم بنجاح', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold, color: const Color(AC.textPrimary))),
+            Text('تم تسجيل التمييز بنجاح', style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.bold, color: const Color(AC.textPrimary))),
           ],
         ),
       ),

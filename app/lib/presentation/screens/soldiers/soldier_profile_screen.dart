@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../core/constants/app_constants.dart';
@@ -104,13 +105,15 @@ class _SoldierProfileScreenState extends State<SoldierProfileScreen> {
             SizedBox(height: 16.h),
             _buildPeriodBreakdown(),
             SizedBox(height: 16.h),
-            _sectionHeader('التقييمات السابقة'),
+            if (_results.length >= 2) _buildProgressChart(),
+            if (_results.length >= 2) SizedBox(height: 16.h),
+            _sectionHeader('التمييزات السابقة'),
             SizedBox(height: 8.h),
             if (_results.isEmpty)
               Container(
                 width: double.infinity, padding: EdgeInsets.all(32.w),
                 decoration: BoxDecoration(color: const Color(AC.card), borderRadius: BorderRadius.circular(12.r), border: Border.all(color: const Color(AC.cardBorder))),
-                child: Center(child: Text('لا توجد تقييمات', style: TextStyle(fontSize: 14.sp, color: const Color(AC.textSecondary)))),
+                child: Center(child: Text('لا توجد تمييزات', style: TextStyle(fontSize: 14.sp, color: const Color(AC.textSecondary)))),
               )
             else
               ..._results.map((r) => _resultCard(r)),
@@ -225,7 +228,7 @@ class _SoldierProfileScreenState extends State<SoldierProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionHeader('آخر تقييم'),
+          _sectionHeader('آخر تمييز'),
           SizedBox(height: 12.h),
           Row(
             children: [
@@ -265,11 +268,11 @@ class _SoldierProfileScreenState extends State<SoldierProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('تحليل التقييمات - $label'),
+            _sectionHeader('تحليل التمييزات - $label'),
             SizedBox(height: 12.h),
             _buildPeriodTabs(),
             SizedBox(height: 12.h),
-            Center(child: Text('لا توجد تقييمات في هذه الفترة', style: TextStyle(fontSize: 14.sp, color: const Color(AC.textSecondary)))),
+            Center(child: Text('لا توجد تمييزات في هذه الفترة', style: TextStyle(fontSize: 14.sp, color: const Color(AC.textSecondary)))),
           ],
         ),
       );
@@ -288,13 +291,13 @@ class _SoldierProfileScreenState extends State<SoldierProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionHeader('تحليل التقييمات - $label'),
+          _sectionHeader('تحليل التمييزات - $label'),
           SizedBox(height: 8.h),
           _buildPeriodTabs(),
           SizedBox(height: 12.h),
           Row(
             children: [
-              _miniStatCard('عدد التقييمات', '$total', const Color(AC.gold)),
+              _miniStatCard('عدد التمييزات', '$total', const Color(AC.gold)),
               SizedBox(width: 8.w),
               _miniStatCard('المعدل العام', avgAll.toStringAsFixed(1), const Color(AC.textPrimary)),
             ],
@@ -368,6 +371,111 @@ class _SoldierProfileScreenState extends State<SoldierProfileScreen> {
     );
   }
 
+  Widget _buildProgressChart() {
+    final sorted = List<ResultModel>.from(_results)
+      ..sort((a, b) => (a.createdAt ?? '').compareTo(b.createdAt ?? ''));
+    final spotsFit = <FlSpot>[];
+    final spotsSpec = <FlSpot>[];
+    final spotsDisc = <FlSpot>[];
+    int i = 0;
+    final labels = <int, String>{};
+    for (final r in sorted) {
+      if (r.fitnessScore != null) spotsFit.add(FlSpot(i.toDouble(), r.fitnessScore!));
+      if (r.specialtyScore != null) spotsSpec.add(FlSpot(i.toDouble(), r.specialtyScore!));
+      if (r.disciplineScore != null) spotsDisc.add(FlSpot(i.toDouble(), r.disciplineScore!));
+      final d = r.formattedDate;
+      if (d.length >= 5) labels[i] = d.substring(d.length - 5);
+      i++;
+    }
+    final maxY = [
+      if (spotsFit.isNotEmpty) spotsFit.map((s) => s.y).reduce((a, b) => a > b ? a : b),
+      if (spotsSpec.isNotEmpty) spotsSpec.map((s) => s.y).reduce((a, b) => a > b ? a : b),
+      if (spotsDisc.isNotEmpty) spotsDisc.map((s) => s.y).reduce((a, b) => a > b ? a : b),
+      100.0,
+    ].reduce((a, b) => a > b ? a : b);
+    final minY = [
+      if (spotsFit.isNotEmpty) spotsFit.map((s) => s.y).reduce((a, b) => a < b ? a : b),
+      if (spotsSpec.isNotEmpty) spotsSpec.map((s) => s.y).reduce((a, b) => a < b ? a : b),
+      if (spotsDisc.isNotEmpty) spotsDisc.map((s) => s.y).reduce((a, b) => a < b ? a : b),
+      0.0,
+    ].reduce((a, b) => a < b ? a : b);
+    final pad = ((maxY - minY) * 0.15).clamp(5, 30);
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16.w),
+      decoration: BoxDecoration(color: const Color(AC.card), borderRadius: BorderRadius.circular(12.r), border: Border.all(color: const Color(AC.cardBorder))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeader('الرسم البياني للتقدم'),
+          SizedBox(height: 12.h),
+          SizedBox(
+            height: 200.h,
+            child: LineChart(
+              LineChartData(
+                minX: 0,
+                maxX: (sorted.length - 1).toDouble().clamp(0, double.infinity),
+                minY: (minY - pad).clamp(0, 100),
+                maxY: (maxY + pad).clamp(0, 100),
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: 20,
+                  getDrawingHorizontalLine: (v) => FlLine(color: const Color(AC.cardBorder), strokeWidth: 0.5),
+                ),
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 32.w, getTitlesWidget: (v, _) => Text('${v.toInt()}', style: TextStyle(fontSize: 9.sp, color: const Color(AC.textSecondary))))),
+                  bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: labels.length > 1, reservedSize: 28.h, interval: 1, getTitlesWidget: (v, _) {
+                    final idx = v.toInt();
+                    if (!labels.containsKey(idx)) return const SizedBox();
+                    return Padding(padding: EdgeInsets.only(top: 4.h), child: Text(labels[idx]!, style: TextStyle(fontSize: 8.sp, color: const Color(AC.textSecondary))));
+                  })),
+                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                ),
+                borderData: FlBorderData(show: false),
+                lineBarsData: [
+                  if (spotsFit.isNotEmpty)
+                    LineChartBarData(spots: spotsFit, color: const Color(0xFF4FC3F7), barWidth: 2.5, dotData: FlDotData(show: true, getDotPainter: (_, __, ___, ____) => FlDotCirclePainter(radius: 3, color: const Color(0xFF4FC3F7), strokeWidth: 0))),
+                  if (spotsSpec.isNotEmpty)
+                    LineChartBarData(spots: spotsSpec, color: const Color(AC.gold), barWidth: 2.5, dotData: FlDotData(show: true, getDotPainter: (_, __, ___, ____) => FlDotCirclePainter(radius: 3, color: const Color(AC.gold), strokeWidth: 0))),
+                  if (spotsDisc.isNotEmpty)
+                    LineChartBarData(spots: spotsDisc, color: const Color(0xFF66BB6A), barWidth: 2.5, dotData: FlDotData(show: true, getDotPainter: (_, __, ___, ____) => FlDotCirclePainter(radius: 3, color: const Color(0xFF66BB6A), strokeWidth: 0))),
+                ],
+                lineTouchData: LineTouchData(
+                  enabled: true,
+                  touchTooltipData: LineTouchTooltipData(getTooltipItems: (spots) => spots.map((s) => LineTooltipItem('${s.y.toStringAsFixed(0)}', TextStyle(color: s.bar.color, fontSize: 12.sp, fontWeight: FontWeight.bold))).toList()),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: 8.h),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _legendDot(const Color(0xFF4FC3F7), 'اللياقة'),
+              SizedBox(width: 16.w),
+              _legendDot(const Color(AC.gold), 'التخصص'),
+              SizedBox(width: 16.w),
+              _legendDot(const Color(0xFF66BB6A), 'الانضباط'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _legendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: 10.r, height: 10.r, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        SizedBox(width: 4.w),
+        Text(label, style: TextStyle(fontSize: 11.sp, color: const Color(AC.textSecondary))),
+      ],
+    );
+  }
+
   Widget _sectionHeader(String title) => Row(
     children: [
       Container(width: 3.w, height: 16.h, color: const Color(AC.gold)),
@@ -414,7 +522,7 @@ class _SoldierProfileScreenState extends State<SoldierProfileScreen> {
           Row(
             children: [
               Expanded(
-                child: Text(r.examTitle ?? 'تقييم', style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600, color: const Color(AC.textPrimary))),
+                child: Text(r.examTitle ?? 'تمييز', style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600, color: const Color(AC.textPrimary))),
               ),
               Text(r.formattedDate, style: TextStyle(fontSize: 12.sp, color: const Color(AC.textSecondary))),
               SizedBox(width: 8.w),

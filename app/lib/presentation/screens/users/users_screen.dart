@@ -30,7 +30,7 @@ class _UsersScreenState extends State<UsersScreen> {
     'notifications', 'announcements', 'users', 'settings',
   ];
   static const _pageLabels = {
-    'dashboard': 'الرئيسية', 'soldiers': 'الأفراد', 'evaluation': 'التقييم',
+    'dashboard': 'الرئيسية', 'soldiers': 'الأفراد', 'evaluation': 'التمييز',
     'exams': 'الامتحانات', 'results': 'النتائج', 'notifications': 'الإشعارات',
     'announcements': 'الإعلانات', 'users': 'المستخدمين', 'settings': 'الإعدادات',
   };

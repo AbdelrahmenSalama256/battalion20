@@ -228,7 +228,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             if (pageAllowed('results')) _quickActionItem(ctx, 'النتائج', Icons.grading_outlined, () => _pushWithAppBar(const ResultsScreen(), 'النتائج')),
             if (pageAllowed('announcements')) _quickActionItem(ctx, 'الإعلانات', Icons.campaign_outlined, () => _pushWithAppBar(const AnnouncementsScreen(), 'الإعلانات')),
             _quickActionItem(ctx, 'مكتب الأفراد', Icons.business_outlined, () => _pushWithAppBar(const PersonnelOfficeScreen(), 'مكتب الأفراد')),
-            _quickActionItem(ctx, 'تقييم سريع', Icons.assignment_turned_in_outlined, () => _pushWithAppBar(const EvaluationFormScreen(), 'تقييم سريع')),
+            _quickActionItem(ctx, 'تمييز سريع', Icons.assignment_turned_in_outlined, () => _pushWithAppBar(const EvaluationFormScreen(), 'تمييز سريع')),
             if (pageAllowed('users')) _quickActionItem(ctx, 'المستخدمين', Icons.manage_accounts_outlined, () => _pushWithAppBar(const UsersScreen(), 'المستخدمين')),
             if (pageAllowed('settings')) _quickActionItem(ctx, 'الإعدادات', Icons.settings_outlined, () => _pushWithAppBar(const SettingsScreen(), 'الإعدادات')),
             SizedBox(height: 8.h),

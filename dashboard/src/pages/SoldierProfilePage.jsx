@@ -105,7 +105,7 @@ export default function SoldierProfilePage({ user, onRefresh }) {
             <div className="fs-4 fw-bold text-danger">{punishments.length}</div>
           </div>
           <div className="text-center">
-            <div className="small text-muted-military">التقييمات</div>
+            <div className="small text-muted-military">التمييزات</div>
             <div className="fs-4 fw-bold text-info">{evaluations.length}</div>
           </div>
         </div>
@@ -157,7 +157,7 @@ export default function SoldierProfilePage({ user, onRefresh }) {
                   <div className="card border-military p-3 text-center">
                     <div className="small text-muted-military">{SECTION_NAMES[sk]}</div>
                     <div className="fs-3 fw-bold text-gold">{ss ? ss.avg_score : '-'}</div>
-                    <div className="small text-muted-military">{ss ? ss.eval_count : 0} تقييم</div>
+                    <div className="small text-muted-military">{ss ? ss.eval_count : 0} تمييز</div>
                     {ss && <div className="small text-muted-military">الأعلى: {ss.max_score} | الأدنى: {ss.min_score}</div>}
                   </div>
                 </div>
@@ -171,7 +171,7 @@ export default function SoldierProfilePage({ user, onRefresh }) {
             {evaluations.length === 0 && distinctions.length === 0 && punishments.length === 0 ? (
               <div className="text-center p-3">لا توجد نشاطات بعد</div>
             ) : (
-              [...evaluations.slice(0, 3).map(e => ({ type: 'evaluation', date: e.created_at, text: `تقييم ${SECTION_NAMES[e.section_key]} — ${e.score}`, color: 'info' })),
+              [...evaluations.slice(0, 3).map(e => ({ type: 'evaluation', date: e.created_at, text: `تمييز ${SECTION_NAMES[e.section_key]} — ${e.score}`, color: 'info' })),
               ...distinctions.slice(0, 2).map(d => ({ type: 'distinction', date: d.created_at, text: `تمييز: ${d.reason}`, color: 'gold' })),
               ...punishments.slice(0, 2).map(p => ({ type: 'punishment', date: p.created_at, text: `جزاء: ${p.reason}`, color: 'danger' })),
               ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5).map((a, i) => (
@@ -187,9 +187,9 @@ export default function SoldierProfilePage({ user, onRefresh }) {
       {/* Per-section evaluation tabs */}
       {SECTION_KEYS.map(sk => activeTab === sk && (
         <div key={sk}>
-          <h5 className="text-gold mb-3">تقييمات {SECTION_NAMES[sk]}</h5>
+          <h5 className="text-gold mb-3">تمييزات {SECTION_NAMES[sk]}</h5>
           {evalsBySection[sk].length === 0 ? (
-            <div className="text-center p-4 text-muted-military">لا توجد تقييمات في {SECTION_NAMES[sk]}</div>
+            <div className="text-center p-4 text-muted-military">لا توجد تمييزات في {SECTION_NAMES[sk]}</div>
           ) : (
             <div className="table-responsive">
               <table className="table table-sm table-hover border-military">

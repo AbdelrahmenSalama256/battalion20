@@ -215,7 +215,7 @@ class _SettingsBodyState extends State<_SettingsBody> with SingleTickerProviderS
               children: [
                 _infoRow('التطبيق', 'كتيبة 20'),
                 _infoRow('الإصدار', '2.0.0'),
-                _infoRow('النظام', 'نظام التقييم العسكري'),
+                _infoRow('النظام', 'نظام التمييز العسكري'),
               ],
             ),
           ),

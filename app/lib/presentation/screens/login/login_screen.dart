@@ -81,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               SizedBox(height: 6.h),
               Text(
-                'نظام التقييم العسكري',
+                'نظام التمييز العسكري',
                 style: TextStyle(
                   fontSize: isLandscape ? 12.sp : 14.sp,
                   color: const Color(AC.textSecondary),

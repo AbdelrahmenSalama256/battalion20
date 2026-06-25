@@ -151,7 +151,7 @@ function UserForm({ user: editUser, ranks, onClose }) {
           <label className="d-flex align-items-center gap-1 small" style={{ fontSize: '0.7rem', cursor: 'pointer' }}>
             <input type="checkbox" checked={canEvaluate} onChange={() => setCanEvaluate(p => !p)}
               style={{ accentColor: 'var(--military-gold-bright)' }} />
-            تقييم
+            تمييز
           </label>
           <label className="d-flex align-items-center gap-1 small" style={{ fontSize: '0.7rem', cursor: 'pointer' }}>
             <input type="checkbox" checked={canDistinguish} onChange={() => setCanDistinguish(p => !p)}

@@ -280,7 +280,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           children: [
                             Text('🛡️ كتيبة 20', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.bold, color: const Color(AC.gold))),
                             SizedBox(height: 4.h),
-                            Text('نظام التقييم العسكري', style: TextStyle(fontSize: 13.sp, color: const Color(AC.textSecondary))),
+                            Text('نظام التمييز العسكري', style: TextStyle(fontSize: 13.sp, color: const Color(AC.textSecondary))),
                             SizedBox(height: 8.h),
                             Text('الإصدار 2.0.0', style: TextStyle(fontSize: 12.sp, color: const Color(AC.textSecondary).withOpacity(0.6))),
                           ],

@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 
 const SECTION_META = {
   specialties: { icon: '🎯', color: 'var(--military-gold-bright)', desc: 'التخصصات وال荖 expertise' },
-  general: { icon: '📋', color: '#4CAF50', desc: 'التقييمات العامة' },
+  general: { icon: '📋', color: '#4CAF50', desc: 'التمييزات العامة' },
   fitness: { icon: '💪', color: '#2196F3', desc: 'اللياقة البدنية' },
   shooting: { icon: '🔫', color: '#FF9800', desc: 'الرماية' },
   discipline: { icon: '🎖️', color: '#9C27B0', desc: 'الانضباط' },

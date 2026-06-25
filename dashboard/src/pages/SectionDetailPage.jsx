@@ -150,7 +150,7 @@ export default function SectionDetailPage({ user, specialties, soldiers }) {
           </div>
           <div className="col-6 col-md-3">
             <div className="card border-military p-3 text-center">
-              <div className="small text-muted-military">عدد التقييمات</div>
+              <div className="small text-muted-military">عدد التمييزات</div>
               <div className="fs-4 fw-bold text-gold">{stats.total_evals || 0}</div>
             </div>
           </div>
@@ -172,8 +172,8 @@ export default function SectionDetailPage({ user, specialties, soldiers }) {
               <th>الاسم</th>
               <th>الحالة</th>
               <th>متوسط الدرجة</th>
-              <th>عدد التقييمات</th>
-              <th>آخر تقييم</th>
+              <th>عدد التمييزات</th>
+              <th>آخر تمييز</th>
             </tr>
           </thead>
           <tbody>

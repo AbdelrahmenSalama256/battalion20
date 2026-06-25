@@ -92,7 +92,7 @@ class EvaluationCubit extends Cubit<EvaluationState> {
       );
       emit(const EvaluationSuccess());
     } catch (e) {
-      emit(EvaluationError('فشل تسجيل التقييم'));
+      emit(EvaluationError('فشل تسجيل التمييز'));
     }
   }
 

@@ -43,7 +43,7 @@ class _SectionDetailScreenState extends State<SectionDetailScreen> {
         _stats = [
           {'label': 'متوسط الدرجات', 'value': '${(results[1] as dynamic).avgScore ?? '-'}', 'icon': Icons.trending_up, 'color': const Color(AC.gold)},
           {'label': 'إجمالي الأفراد', 'value': '${(results[1] as dynamic).totalSoldiers ?? '-'}', 'icon': Icons.people_outline, 'color': const Color(AC.success)},
-          {'label': 'عدد التقييمات', 'value': '${(results[1] as dynamic).totalResults ?? '-'}', 'icon': Icons.assignment_turned_in_outlined, 'color': const Color(0xFF4FC3F7)},
+          {'label': 'عدد التمييزات', 'value': '${(results[1] as dynamic).totalResults ?? '-'}', 'icon': Icons.assignment_turned_in_outlined, 'color': const Color(0xFF4FC3F7)},
         ];
       }
       if (mounted) setState(() => _loading = false);

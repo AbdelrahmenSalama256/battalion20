@@ -102,7 +102,7 @@ class _AppDrawerState extends State<AppDrawer> {
                           content: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text('نظام التقييم العسكري', style: TextStyle(fontSize: 14.sp, color: const Color(AC.textSecondary))),
+                              Text('نظام التمييز العسكري', style: TextStyle(fontSize: 14.sp, color: const Color(AC.textSecondary))),
                               SizedBox(height: 8.h),
                               Text('الإصدار 2.0.0', style: TextStyle(fontSize: 12.sp, color: const Color(AC.textSecondary).withOpacity(0.6))),
                             ],
