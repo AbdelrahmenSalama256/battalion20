@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import ScoreBadge from '../components/ScoreBadge';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 const SECTION_NAMES = {
   general: 'عام', fitness: 'لياقة', shooting: 'رماية',
@@ -164,6 +165,42 @@ export default function SoldierProfilePage({ user, onRefresh }) {
               );
             })}
           </div>
+
+          {/* Progress Chart */}
+          {evaluations.length >= 2 && (() => {
+            const bySection = {};
+            SECTION_KEYS.forEach(sk => {
+              bySection[sk] = evaluations.filter(e => e.section_key === sk)
+                .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            });
+            const allDates = [...new Set(evaluations.map(e => e.created_at?.substring(0, 10)))].sort();
+            const chartData = allDates.map(date => {
+              const entry = { date: date?.substring(5) || '' };
+              SECTION_KEYS.forEach(sk => {
+                const ev = evaluations.find(e => e.section_key === sk && e.created_at?.startsWith(date));
+                if (ev) entry[sk] = ev.score;
+              });
+              return entry;
+            });
+            const colors = { general: '#4CAF50', fitness: '#2196F3', shooting: '#FF9800', discipline: '#9C27B0', specialties: '#FFD700' };
+            return (
+              <div className="card border-military p-3 mb-4">
+                <h5 className="text-gold mb-3">الرسم البياني للتقدم</h5>
+                <ResponsiveContainer width="100%" height={250}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--military-border)" />
+                    <XAxis dataKey="date" tick={{ fill: 'var(--military-text-muted)', fontSize: 11 }} />
+                    <YAxis tick={{ fill: 'var(--military-text-muted)', fontSize: 11 }} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ background: 'var(--military-card)', border: '1px solid var(--military-border)', borderRadius: 8, color: 'var(--military-text-primary)' }} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    {SECTION_KEYS.filter(sk => bySection[sk].length > 0).map(sk => (
+                      <Line key={sk} type="monotone" dataKey={sk} stroke={colors[sk]} strokeWidth={2} dot={{ r: 3 }} name={SECTION_NAMES[sk]} connectNulls />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })()}
 
           {/* Recent Activity */}
           <h5 className="text-gold mb-3">آخر النشاطات</h5>
