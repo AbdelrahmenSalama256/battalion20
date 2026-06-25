@@ -12,7 +12,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
     ? process.env.DATABASE_URL.split("?")[0]
     : undefined,
-  ...(isProd ? { ssl: { rejectUnauthorized: false } } : {}),
+  ssl: { rejectUnauthorized: false },
   max: 5,
 });
 const db = { query: (text, params) => pool.query(text, params), pool };
