@@ -1,11 +1,12 @@
 [build]
   base = "dashboard"
-  command = "NODE_ENV=development npm install --prefer-offline && npm run build"
+  command = "npm install && npm run build"
   publish = "dist"
   functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "22"
+  NPM_CONFIG_PRODUCTION = "false"
   SECRETS_SCAN_OMIT_KEYS = "NODE_ENV,VITE_API_URL"
 
 [functions]
