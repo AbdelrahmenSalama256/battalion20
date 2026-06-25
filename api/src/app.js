@@ -101,10 +101,12 @@ async function runMigrations() {
 
 const PORT = process.env.PORT || 3001;
 
-runMigrations().then(() => {
-  server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+if (require.main === module || process.env.VERCEL !== '1') {
+  runMigrations().then(() => {
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
   });
-});
+}
 
 module.exports = { app, server };
