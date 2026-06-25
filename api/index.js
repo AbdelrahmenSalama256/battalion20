@@ -1510,7 +1510,7 @@ app.use((err, req, res, next) => {
 
 if (process.env.VERCEL === '1') {
   runMigrations().catch(e => console.error("Migration:", e.message));
-  module.exports = app;
+  module.exports = serverless(app);
 } else {
   let cachedHandler;
   exports.handler = async (event, context) => {
