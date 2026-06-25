@@ -14,6 +14,7 @@ const pool = new Pool({
     : undefined,
   ssl: { rejectUnauthorized: false },
   max: 5,
+  connectionTimeoutMillis: 3000,
 });
 const db = { query: (text, params) => pool.query(text, params), pool };
 
@@ -1509,7 +1510,6 @@ app.use((err, req, res, next) => {
 });
 
 if (process.env.VERCEL === '1') {
-  runMigrations().catch(e => console.error("Migration:", e.message));
   module.exports = serverless(app);
 } else {
   let cachedHandler;
