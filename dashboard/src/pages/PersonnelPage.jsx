@@ -133,7 +133,7 @@ export default function PersonnelPage({ user, soldiers }) {
                     <td>{i + 1}</td>
                     <td><span className="text-gold">{s.rank_name || ''}</span></td>
                     <td>{s.name}</td>
-                    <td className="text-muted-military">{s.military_number || '—'}</td>
+                    <td className="text-muted-military">{s.military_id || '—'}</td>
                     <td><span className={`badge ${s.days_since_leave > 30 ? 'bg-danger' : 'bg-warning text-dark'}`}>{s.days_since_leave} يوم</span></td>
                     <td>
                       <button className="btn btn-sm btn-outline-gold" onClick={() => { setLeaveForm(f => ({ ...f, soldier_id: s.id })); setSoldierInfo(null); setStartModal(true); }}>
@@ -287,7 +287,7 @@ export default function PersonnelPage({ user, soldiers }) {
                       onChange={e => { setLeaveForm(f => ({ ...f, soldier_id: e.target.value })); setSoldierInfo(null); }}>
                       <option value="">اختر جندي...</option>
                       {(soldiers || []).filter(s => s.status !== 'إجازة').map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.military_number || '—'})</option>
+                        <option key={s.id} value={s.id}>{s.name} ({s.military_id || '—'})</option>
                       ))}
                     </select>
                   </div>

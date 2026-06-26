@@ -1,8 +1,14 @@
 import { useNavigate } from 'react-router-dom';
-import ScoreBadge from '../components/ScoreBadge';
 
 export default function NotificationsPage({ notifications, onMarkRead, onMarkAll }) {
   const navigate = useNavigate();
+
+  function handleClick(n) {
+    if (!n.is_read) onMarkRead(n.id);
+    if (n.evaluated_id) navigate(`/soldiers/${n.evaluated_id}`);
+    else if (n.type === 'announcement') navigate('/');
+    else if (n.evaluator_id) navigate('/');
+  }
 
   return (
     <div>
@@ -14,10 +20,7 @@ export default function NotificationsPage({ notifications, onMarkRead, onMarkAll
         {notifications.map(n => (
           <div key={n.id}
             className={`list-group-item list-group-item-action notif-item d-flex gap-2 align-items-start ${n.is_read ? '' : 'unread'}`}
-            onClick={() => {
-              if (!n.is_read) onMarkRead(n.id);
-              if (n.evaluated_id) navigate(`/soldiers/${n.evaluated_id}`);
-            }}>
+            onClick={() => handleClick(n)}>
             <div className="fs-5">
               {n.type === 'evaluation' ? '📋' : n.type === 'distinction' ? '⭐' : n.type === 'punishment' ? '⚠️' : '📢'}
             </div>

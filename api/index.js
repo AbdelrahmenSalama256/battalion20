@@ -1,3 +1,4 @@
+if (typeof process.env.VERCEL === "undefined") require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -5,11 +6,11 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
+const DB_URL = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0] : undefined;
+const isLocal = DB_URL && DB_URL.includes("localhost");
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-    ? process.env.DATABASE_URL.split("?")[0]
-    : undefined,
-  ssl: { rejectUnauthorized: false },
+  connectionString: DB_URL,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
   max: 5,
   connectionTimeoutMillis: 3000,
   query_timeout: 5000,
@@ -182,14 +183,23 @@ er.post("/login", async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password)
       return res.status(400).json({ error: "يرجى إدخال البيانات" });
-    const { rows } = await db.query(
-      "SELECT u.id,u.name,u.username,u.password_hash,u.role,u.is_active,u.created_at,u.rank_id,u.permissions,u.avatar_url,r.name rank_name,r.sort_order rank_order FROM users u LEFT JOIN ranks r ON r.id=u.rank_id::uuid WHERE u.username=$1 AND u.is_active=true",
-      [username],
-    );
-    if (
-      !rows.length ||
-      !(await bcrypt.compare(password, rows[0].password_hash))
-    )
+    let rows;
+    try {
+      const result = await db.query(
+        "SELECT u.id,u.name,u.username,u.password_hash,u.role,u.is_active,u.created_at,u.rank_id,u.permissions,u.avatar_url,r.name rank_name,r.sort_order rank_order FROM users u LEFT JOIN ranks r ON r.id=u.rank_id::uuid WHERE u.username=$1 AND u.is_active=true",
+        [username],
+      );
+      rows = result.rows;
+    } catch (dbErr) {
+      return res.status(500).json({ error: `DB: ${dbErr.message}` });
+    }
+    let passwordOk;
+    try {
+      passwordOk = await bcrypt.compare(password, rows[0].password_hash);
+    } catch (bcryptErr) {
+      return res.status(500).json({ error: `BCRYPT: ${bcryptErr.message}` });
+    }
+    if (!rows.length || !passwordOk)
       return res.status(401).json({ error: "بيانات الدخول غير صحيحة" });
     const u = rows[0];
     const token = jwt.sign(
@@ -551,7 +561,7 @@ ev.get("/soldier/:soldierId", auth, async (req, res) => {
 ev.get("/stats/:sectionKey", auth, async (req, res) => {
   try {
     const { specialtyId } = req.query;
-    let sql = "SELECT COUNT(*) total_soldiers,ROUND(AVG(score),1) avg_score,COUNT(*) total_evals,MAX(score) max_score FROM evaluations WHERE section_key=$1";
+    let sql = "SELECT COUNT(DISTINCT soldier_id) total_soldiers,ROUND(AVG(score),1) avg_score,COUNT(*) total_evals,MAX(score) max_score FROM evaluations WHERE section_key=$1";
     const p = [req.params.sectionKey];
     if (specialtyId) { sql += " AND specialty_id=$2"; p.push(specialtyId); }
     const { rows } = await pool.query(sql, p);
@@ -702,7 +712,7 @@ sp.get("/:id", auth, async (req, res) => {
   try {
     const { rows: spec } = await db.query("SELECT sp.*,(SELECT COUNT(*) FROM soldiers s WHERE s.specialty_id=sp.id)::int as soldier_count FROM specialties sp WHERE sp.id=$1", [req.params.id]);
     if (!spec.length) return res.status(404).json({ error: "غير موجود" });
-    const { rows: soldiers } = await pool.query("SELECT s.id,s.name,s.status,r.name rank_name,ROUND(AVG(res.total_score),1) avg_score,COUNT(res.id) eval_count,s.created_at assigned_at FROM soldiers s LEFT JOIN ranks r ON r.id=s.rank_id LEFT JOIN results res ON res.soldier_id=s.id WHERE s.specialty_id=$1 GROUP BY s.id,r.name ORDER BY s.name", [req.params.id]);
+    const { rows: soldiers } = await pool.query("SELECT s.id,s.name,s.status,r.name rank_name,ROUND(AVG(res.total_score),1) avg_score,COUNT(res.id)::int eval_count,s.created_at assigned_at FROM soldiers s LEFT JOIN ranks r ON r.id=s.rank_id LEFT JOIN results res ON res.soldier_id=s.id WHERE s.specialty_id=$1 GROUP BY s.id,r.name ORDER BY s.name", [req.params.id]);
     const totalSoldiers = soldiers.length;
     const avgScore = soldiers.length ? soldiers.reduce((a,b)=>a+(Number(b.avg_score)||0),0)/soldiers.length : 0;
     res.json({ ...spec[0], soldiers, stats: { total_soldiers: totalSoldiers, total_evals: soldiers.reduce((a,b)=>a+(b.eval_count||0),0), avg_score: avgScore ? Math.round(avgScore*10)/10 : null } });
@@ -757,10 +767,10 @@ app.use("/api/ranks", rk);
 const ex = express.Router();
 ex.get("/", auth, async (req, res) => {
   try {
-    const { type, weaponId } = req.query;
+    const { sectionKey, specialtyId } = req.query;
     const { rows } = await db.query(
-      "SELECT e.*,w.name weapon_name,w.icon weapon_icon,sp.name specialty_name,COUNT(DISTINCT ei.id)::int item_count,COUNT(DISTINCT r.id)::int result_count,ROUND(AVG(r.total_score),1) avg_score FROM exams e LEFT JOIN weapons w ON w.id=e.weapon_id LEFT JOIN specialties sp ON sp.id=e.specialty_id LEFT JOIN exam_items ei ON ei.exam_id=e.id LEFT JOIN results r ON r.exam_id=e.id WHERE($1::text IS NULL OR e.type=$1::text)AND($2::uuid IS NULL OR e.weapon_id=$2::uuid) GROUP BY e.id,w.name,w.icon,sp.name ORDER BY e.created_at DESC",
-      [type || null, weaponId || null],
+      "SELECT e.*,sp.name specialty_name,COUNT(DISTINCT ei.id)::int item_count,COUNT(DISTINCT r.id)::int result_count,ROUND(AVG(r.total_score),1) avg_score FROM exams e LEFT JOIN specialties sp ON sp.id=e.specialty_id LEFT JOIN exam_items ei ON ei.exam_id=e.id LEFT JOIN results r ON r.exam_id=e.id WHERE($1::text IS NULL OR e.section_key=$1::text)AND($2::uuid IS NULL OR e.specialty_id=$2::uuid) GROUP BY e.id,sp.name ORDER BY e.created_at DESC",
+      [sectionKey || null, specialtyId || null],
     );
     res.json(
       rows.map((r) => ({
@@ -775,7 +785,7 @@ ex.get("/", auth, async (req, res) => {
 ex.get("/:id", auth, async (req, res) => {
   try {
     const exam = await db.query(
-      "SELECT e.*,w.name weapon_name,w.icon weapon_icon,w.color weapon_color,sp.name specialty_name FROM exams e LEFT JOIN weapons w ON w.id=e.weapon_id LEFT JOIN specialties sp ON sp.id=e.specialty_id WHERE e.id=$1",
+      "SELECT e.*,sp.name specialty_name FROM exams e LEFT JOIN specialties sp ON sp.id=e.specialty_id WHERE e.id=$1",
       [req.params.id],
     );
     if (!exam.rows.length) return res.status(404).json({ error: "غير موجود" });
@@ -790,12 +800,12 @@ ex.get("/:id", auth, async (req, res) => {
 });
 ex.post("/", auth, async (req, res) => {
   try {
-    const { title, sectionKey, type, weaponId, specialtyId, focusPoints, items, notes, maxScore } = req.body;
+    const { title, sectionKey, specialtyId, focusPoints, items, notes, maxScore } = req.body;
     if (!title) return res.status(400).json({ error: "يرجى إدخال البيانات" });
-    const examType = sectionKey || type || "general";
+    const examSectionKey = sectionKey || "general";
     const { rows } = await db.query(
-      "INSERT INTO exams(title,type,weapon_id,specialty_id,focus_points,max_score,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
-      [title, examType, weaponId || null, specialtyId || null, focusPoints || null, maxScore || 100, notes || null, req.user.id],
+      "INSERT INTO exams(title,section_key,specialty_id,focus_points,max_score,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+      [title, examSectionKey, specialtyId || null, focusPoints || null, maxScore || 100, notes || null, req.user.id],
     );
     if (items?.length) for (const item of items)
       await db.query("INSERT INTO exam_items(exam_id,text,max_score,sort_order) VALUES($1,$2,$3,$4)", [rows[0].id, item.text, item.maxScore || 10, item.sortOrder || 0]);
@@ -806,11 +816,11 @@ ex.post("/", auth, async (req, res) => {
 });
 ex.put("/:id", auth, async (req, res) => {
   try {
-    const { title, sectionKey, type, weaponId, specialtyId, focusPoints, notes, maxScore } = req.body;
-    const examType = sectionKey || type || "general";
+    const { title, sectionKey, specialtyId, focusPoints, notes, maxScore } = req.body;
+    const examSectionKey = sectionKey || "general";
     const { rows } = await db.query(
-      "UPDATE exams SET title=$1,type=$2,weapon_id=$3,specialty_id=$4,focus_points=$5,max_score=$6,notes=$7 WHERE id=$8 RETURNING *",
-      [title, examType, weaponId || null, specialtyId || null, focusPoints || null, maxScore || 100, notes || null, req.params.id],
+      "UPDATE exams SET title=$1,section_key=$2,specialty_id=$3,focus_points=$4,max_score=$5,notes=$6 WHERE id=$7 RETURNING *",
+      [title, examSectionKey, specialtyId || null, focusPoints || null, maxScore || 100, notes || null, req.params.id],
     );
     if (!rows.length) return res.status(404).json({ error: "غير موجود" });
     res.json(rows[0]);
@@ -1181,7 +1191,7 @@ an.post("/", auth, async (req, res) => {
     const priority = allowedPriority.includes(rawPriority) ? rawPriority : 'normal';
     const text = body || content || null;
     const { rows } = await db.query(
-      "INSERT INTO announcements(title,body,priority,created_by)VALUES($1,$2,$3,$4)RETURNING *",
+      "INSERT INTO announcements(title,content,priority,created_by)VALUES($1,$2,$3,$4)RETURNING *",
       [title, text, priority, req.user.id],
     );
     await db.query("INSERT INTO notifications(type,message,evaluator_name)VALUES('announcement',$1,$2)", [`إعلان جديد: ${title}`, req.user.name]);
@@ -1205,7 +1215,7 @@ an.put("/:id", auth, commanderOnly, async (req, res) => {
     const allowedPriority = ['urgent','info','normal'];
     const priority = allowedPriority.includes(rawPriority) ? rawPriority : 'normal';
     const text = body || content || null;
-    const { rows } = await db.query("UPDATE announcements SET title=$1,body=$2,priority=$3 WHERE id=$4 RETURNING *", [title, text, priority, req.params.id]);
+    const { rows } = await db.query("UPDATE announcements SET title=$1,content=$2,priority=$3 WHERE id=$4 RETURNING *", [title, text, priority, req.params.id]);
     if (!rows.length) return res.status(404).json({ error: "غير موجود" });
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1269,7 +1279,7 @@ const lv = express.Router();
 lv.get("/", auth, async (req, res) => {
   try {
     const { soldier_id, status } = req.query;
-    let sql = "SELECT l.*,s.name soldier_name,s.military_number FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE 1=1";
+    let sql = "SELECT l.*,s.name soldier_name,s.military_id FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE 1=1";
     const params = []; let i = 1;
     if (soldier_id) { sql += ` AND l.soldier_id=$${i}`; params.push(soldier_id); i++; }
     if (status) { sql += ` AND l.status=$${i}`; params.push(status); i++; }
@@ -1280,13 +1290,13 @@ lv.get("/", auth, async (req, res) => {
 });
 lv.get("/dashboard", auth, async (req, res) => {
   try {
-    const total = await pool.query("SELECT COUNT(*) FROM soldiers WHERE is_active=TRUE");
-    const onLeave = await pool.query("SELECT COUNT(*) FROM soldiers WHERE status='إجازة' AND is_active=TRUE");
-    const needingLeave = await pool.query("SELECT COUNT(*) FROM soldiers s WHERE s.is_active=TRUE AND (s.status IS DISTINCT FROM 'إجازة') AND CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date)>21");
+    const total = await pool.query("SELECT COUNT(*) FROM soldiers");
+    const onLeave = await pool.query("SELECT COUNT(*) FROM soldiers WHERE status='إجازة'");
+    const needingLeave = await pool.query("SELECT COUNT(*) FROM soldiers s WHERE (s.status IS DISTINCT FROM 'إجازة') AND CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date)>21");
     const returningToday = await pool.query("SELECT COUNT(*) FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' AND l.end_date=CURRENT_DATE AND l.return_confirmed=FALSE");
-    const statusDist = await pool.query("SELECT status,COUNT(*)::int as count FROM soldiers WHERE is_active=TRUE GROUP BY status");
+    const statusDist = await pool.query("SELECT status,COUNT(*)::int as count FROM soldiers GROUP BY status");
     const monthlyStats = await pool.query("SELECT TO_CHAR(start_date,'YYYY-MM') as month,COUNT(*) as leaves_count FROM leaves WHERE start_date>=CURRENT_DATE-INTERVAL'12 months' GROUP BY TO_CHAR(start_date,'YYYY-MM') ORDER BY month");
-    const upcomingReturns = await pool.query("SELECT l.*,s.name soldier_name,s.military_number,(l.end_date-CURRENT_DATE) as days_remaining FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' AND l.return_confirmed=FALSE AND l.end_date BETWEEN CURRENT_DATE AND CURRENT_DATE+7 ORDER BY l.end_date ASC");
+    const upcomingReturns = await pool.query("SELECT l.*,s.name soldier_name,s.military_id,(l.end_date-CURRENT_DATE) as days_remaining FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' AND l.return_confirmed=FALSE AND l.end_date BETWEEN CURRENT_DATE AND CURRENT_DATE+7 ORDER BY l.end_date ASC");
     res.json({
       total: parseInt(total.rows[0].count), onLeave: parseInt(onLeave.rows[0].count),
       needingLeave: parseInt(needingLeave.rows[0].count), returningToday: parseInt(returningToday.rows[0].count),
@@ -1297,19 +1307,19 @@ lv.get("/dashboard", auth, async (req, res) => {
 });
 lv.get("/active", auth, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT l.*,s.name soldier_name,s.military_number,(l.end_date-CURRENT_DATE) as remaining_days FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' ORDER BY l.end_date ASC");
+    const { rows } = await pool.query("SELECT l.*,s.name soldier_name,s.military_id,(l.end_date-CURRENT_DATE) as remaining_days FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' ORDER BY l.end_date ASC");
     res.json({ leaves: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 lv.get("/overdue-return", auth, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT l.*,s.name soldier_name,s.military_number,(CURRENT_DATE-l.end_date) as overdue_days FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' AND l.end_date<CURRENT_DATE AND l.return_confirmed=FALSE ORDER BY l.end_date ASC");
+    const { rows } = await pool.query("SELECT l.*,s.name soldier_name,s.military_id,(CURRENT_DATE-l.end_date) as overdue_days FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' AND l.end_date<CURRENT_DATE AND l.return_confirmed=FALSE ORDER BY l.end_date ASC");
     res.json({ leaves: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 lv.get("/needing-leave", auth, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT * FROM (SELECT s.id,s.name,s.military_number,s.status as soldier_status,r.name as rank_name,COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as last_leave,CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as days_since_leave FROM soldiers s LEFT JOIN ranks r ON s.rank_id=r.id WHERE s.is_active=TRUE AND (s.status IS DISTINCT FROM 'إجازة')) sub WHERE days_since_leave>21 ORDER BY days_since_leave DESC");
+    const { rows } = await pool.query("SELECT * FROM (SELECT s.id,s.name,s.military_id,s.status as soldier_status,r.name as rank_name,COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as last_leave,CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as days_since_leave FROM soldiers s LEFT JOIN ranks r ON s.rank_id=r.id WHERE (s.status IS DISTINCT FROM 'إجازة')) sub WHERE days_since_leave>21 ORDER BY days_since_leave DESC");
     res.json({ soldiers: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1497,10 +1507,10 @@ app.post("/api/admin/seed", auth, commanderOnly, async (req, res) => {
       "INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id)SELECT 'جندي تجريبي','12345',(SELECT id FROM ranks WHERE name='جندي' LIMIT 1),(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1),(SELECT id FROM specialties LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons)",
     );
     await db.query(
-      "INSERT INTO exams(type,title,weapon_id)SELECT 'لياقة','اختبار تجريبي',(SELECT id FROM weapons LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons)",
+      "INSERT INTO exams(section_key,title)SELECT 'fitness','اختبار تجريبي' WHERE EXISTS(SELECT 1 FROM weapons)",
     );
     await db.query(
-      "INSERT INTO announcements(title,body,priority,created_by)SELECT 'مرحباً','المنصة جاهزة للعمل','info',(SELECT id FROM users WHERE role='commander' LIMIT 1)",
+      "INSERT INTO announcements(title,content,priority,created_by)SELECT 'مرحباً','المنصة جاهزة للعمل','info',(SELECT id FROM users WHERE role='commander' LIMIT 1)",
     );
     res.json({ message: "✅ تم إضافة بيانات تجريبية" });
   } catch (e) {
@@ -1514,3 +1524,19 @@ app.use((err, req, res, next) => {
 });
 
 module.exports = app;
+if (typeof process.env.VERCEL === "undefined") {
+  const port = process.env.PORT || 3001;
+  app.listen(port, async () => {
+    console.log(`API running on http://localhost:${port}`);
+    try {
+      await runMigrations();
+  await pool.query("CREATE TABLE IF NOT EXISTS exam_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), exam_id UUID REFERENCES exams(id) ON DELETE CASCADE, text TEXT NOT NULL, max_score NUMERIC(5,2) DEFAULT 10, sort_order INT DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW())");
+  try { await pool.query("CREATE INDEX IF NOT EXISTS idx_exam_items_exam_id ON exam_items(exam_id)"); } catch (e) {}
+  await pool.query("CREATE TABLE IF NOT EXISTS result_item_scores (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), result_id UUID REFERENCES results(id) ON DELETE CASCADE, item_id UUID REFERENCES exam_items(id) ON DELETE SET NULL, score NUMERIC(5,2), max_score NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
+  await pool.query("CREATE TABLE IF NOT EXISTS fitness_results (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, exercise_id UUID, score_value NUMERIC(5,2), score_percent NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
+  console.log("Migrations done");
+    } catch (e) {
+      console.error("Migration error:", e.message);
+    }
+  });
+}

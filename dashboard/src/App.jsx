@@ -7,7 +7,7 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import './styles.css';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
-import SectionsPage from './pages/SectionsPage';
+import DashboardPage from './pages/DashboardPage';
 import SectionDetailPage from './pages/SectionDetailPage';
 import SpecialtyDetailPage from './pages/SpecialtyDetailPage';
 import SoldiersPage from './pages/SoldiersPage';
@@ -157,7 +157,7 @@ export default function App() {
   return (
     <Layout user={u} onLogout={handleLogout} data={data} onMarkRead={markRead} onMarkAll={markAllRead}>
       <Routes>
-        <Route path="/" element={<SectionsPage user={u} sections={data.sections} />} />
+        <Route path="/" element={<DashboardPage user={u} sections={data.sections} notifications={data.notifications} onMarkRead={markRead} />} />
         <Route path="/sections/:key" element={
           <SectionDetailGuard user={u} specialties={data.specialties} soldiers={data.soldiers} />
         } />
