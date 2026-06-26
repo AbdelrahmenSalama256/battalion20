@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import {
   ComposedChart,
+  BarChart,
   Line,
   Bar,
   XAxis,
