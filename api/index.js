@@ -1261,8 +1261,10 @@ ps.post("/subscribe", auth, async (req, res) => {
   try {
     const { endpoint, keys } = req.body;
     if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: "Missing data" });
-    await pool.query("DELETE FROM push_subscriptions WHERE endpoint=$1", [endpoint]);
-    await pool.query("INSERT INTO push_subscriptions(user_id,endpoint,p256dh,auth)VALUES($1,$2,$3,$4)", [req.user.id, endpoint, keys.p256dh, keys.auth]);
+    await pool.query(
+      "INSERT INTO push_subscriptions(user_id,endpoint,p256dh,auth)VALUES($1,$2,$3,$4) ON CONFLICT(endpoint)DO UPDATE SET p256dh=$3,auth=$4,updated_at=NOW()",
+      [req.user.id, endpoint, keys.p256dh, keys.auth]
+    );
     res.json({ message: "ok" });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

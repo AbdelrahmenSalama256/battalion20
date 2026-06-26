@@ -141,6 +141,9 @@ export const api = {
   cancelLeave: (id) => req('PATCH', `/leaves/${id}/cancel`),
   getPersonnelDashboard: () => req('GET', '/leaves/dashboard'),
 
+  // Results
+  getResultsStats: () => req('GET', '/results/stats'),
+
   // Admin
   seed: () => req('POST', '/admin/seed'),
 };

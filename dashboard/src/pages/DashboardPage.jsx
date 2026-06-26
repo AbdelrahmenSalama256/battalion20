@@ -89,7 +89,7 @@ export default function DashboardPage({ user, sections, notifications, onMarkRea
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api('/results/stats').then(setStats).catch(() => {}).finally(() => setLoading(false));
+    api.getResultsStats().then(setStats).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   const canAccess = (key) => {
