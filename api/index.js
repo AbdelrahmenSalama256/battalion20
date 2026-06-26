@@ -1,6 +1,4 @@
 const express = require("express");
-const cors = require("cors");
-const helmet = require("helmet");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -151,24 +149,11 @@ process.on("unhandledRejection", (err) => {
   console.error("UNHANDLED REJECTION:", err?.message || err);
 });
 const app = express();
-app.use(
-  cors({
-    origin: [
-      process.env.FRONTEND_URL || "http://localhost:5173",
-      "http://localhost:5173",
-      "http://localhost:3000",
-    ],
-    credentials: true,
-  }),
-);
-app.use(express.json({ limit: "10mb" }));
-app.use((req, res, next) => {
-  next();
-});
+app.use(express.json());
 
-app.all("/api/ping", (req, res) =>
-  res.json({ method: req.method, url: req.url, path: req.path, ok: true, time: Date.now() })
-);
+app.all("*", (req, res) => {
+  res.json({ method: req.method, url: req.url, path: req.path, ok: true, time: Date.now() });
+});
 app.get("/api/health", (req, res) =>
   res.json({ status: "ok", timestamp: new Date().toISOString() })
 );
