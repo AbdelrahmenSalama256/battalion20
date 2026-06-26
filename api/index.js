@@ -151,7 +151,6 @@ process.on("unhandledRejection", (err) => {
   console.error("UNHANDLED REJECTION:", err?.message || err);
 });
 const app = express();
-app.use(helmet());
 app.use(
   cors({
     origin: [
@@ -167,11 +166,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/api/ping", (req, res) =>
-  res.json({ ok: true, time: Date.now() })
-);
-app.post("/api/ping", (req, res) =>
-  res.json({ ok: true, method: "POST", time: Date.now() })
+app.all("/api/ping", (req, res) =>
+  res.json({ method: req.method, url: req.url, path: req.path, ok: true, time: Date.now() })
 );
 app.get("/api/health", (req, res) =>
   res.json({ status: "ok", timestamp: new Date().toISOString() })
