@@ -1521,4 +1521,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "حدث خطأ غير متوقع" });
 });
 
-module.exports = app;
+const http = require("http");
+const server = http.createServer(app);
+module.exports = (req, res) => server.emit("request", req, res);
