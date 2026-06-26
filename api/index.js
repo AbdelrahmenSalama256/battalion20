@@ -4,6 +4,7 @@ const helmet = require("helmet");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const serverless = require("serverless-http");
 
 const isProd = process.env.NODE_ENV === "production";
 const pool = new Pool({
@@ -169,6 +170,9 @@ app.use((req, res, next) => {
 
 app.get("/api/ping", (req, res) =>
   res.json({ ok: true, time: Date.now() })
+);
+app.post("/api/ping", (req, res) =>
+  res.json({ ok: true, method: "POST", time: Date.now() })
 );
 app.get("/api/health", (req, res) =>
   res.json({ status: "ok", timestamp: new Date().toISOString() })
@@ -1518,4 +1522,4 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "حدث خطأ غير متوقع" });
 });
 
-module.exports = app;
+module.exports = serverless(app);
