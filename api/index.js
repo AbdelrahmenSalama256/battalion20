@@ -1521,6 +1521,4 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "حدث خطأ غير متوقع" });
 });
 
-module.exports = (req, res) => {
-  app(req, res);
-};
+module.exports = app;
