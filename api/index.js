@@ -4,7 +4,6 @@ const helmet = require("helmet");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const serverless = require("serverless-http");
 
 const isProd = process.env.NODE_ENV === "production";
 const pool = new Pool({
@@ -1522,4 +1521,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "حدث خطأ غير متوقع" });
 });
 
-module.exports = serverless(app);
+module.exports = (req, res) => {
+  app(req, res);
+};
