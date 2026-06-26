@@ -12,8 +12,13 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
     ? process.env.DATABASE_URL.split("?")[0]
     : undefined,
-  ...(isProd ? { ssl: { rejectUnauthorized: false } } : {}),
+  ssl: { rejectUnauthorized: false },
   max: 5,
+  connectionTimeoutMillis: 3000,
+  query_timeout: 5000,
+});
+pool.on("error", (err) => {
+  console.error("POOL ERROR:", err?.message || err);
 });
 const db = { query: (text, params) => pool.query(text, params), pool };
 
@@ -144,6 +149,9 @@ async function canEvaluate(userId, soldierId) {
   return ur.rows[0].sort_order > sr.rows[0].sort_order;
 }
 
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION:", err?.message || err);
+});
 const app = express();
 app.use(helmet());
 app.use(
