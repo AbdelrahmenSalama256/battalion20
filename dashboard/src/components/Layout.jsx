@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import AIChat from "./AIChat";
 
 const ALL_TABS = [
   { id: "sections", label: "الرئيسية", icon: "📊", path: "/" },
@@ -280,6 +281,7 @@ export default function Layout({
         </div>
         <div className="flex-grow-1 overflow-auto p-3">{children}</div>
       </div>
+      <AIChat />
     </div>
   );
 }

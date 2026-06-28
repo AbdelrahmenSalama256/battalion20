@@ -141,6 +141,9 @@ export const api = {
   cancelLeave: (id) => req('PATCH', `/leaves/${id}/cancel`),
   getPersonnelDashboard: () => req('GET', '/leaves/dashboard'),
 
+  // AI
+  aiChat: (message) => req('POST', '/ai/chat', { message }),
+
   // Results
   getResultsStats: () => req('GET', '/results/stats'),
 
