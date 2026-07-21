@@ -147,6 +147,7 @@ export const api = {
   // Cipher
   getCipherMap: () => req('GET', '/cipher/map'),
   downloadDecoder: () => req('GET', '/cipher/download'),
+  decodeCipher: (text) => req('POST', '/cipher/decode', { text }),
 
   // Bulk upload
   bulkUpload: (soldiers) => req('POST', '/soldiers/bulk-upload', { soldiers }),

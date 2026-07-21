@@ -5,6 +5,8 @@ const helmet = require("helmet");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const PDFDocument = require("pdfkit");
+const path = require("path");
 
 const DB_URL = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0] : undefined;
 const isLocal = DB_URL && DB_URL.includes("localhost");
@@ -1543,35 +1545,171 @@ app.get("/api/cipher/map", auth, commanderOnly, async (req, res) => {
   res.json({ mapping: DIGIT_SYMBOLS.map((symbol, digit) => ({ symbol, digit })) });
 });
 
+// Hardcoded decoder "AI" — decodes cipher symbols back to numbers
+// Only works for commander/admin; rate-limited by auth middleware
+app.post("/api/cipher/decode", auth, commanderOnly, async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || typeof text !== "string" || text.length > 5000) {
+      return res.status(400).json({ error: "نص غير صالح أو طويل جداً" });
+    }
+
+    // Build reverse map from symbols to digits
+    const reverseMap = {};
+    DIGIT_SYMBOLS.forEach((sym, digit) => { reverseMap[sym] = digit; });
+
+    // Get all symbol characters from the map
+    const symbolChars = DIGIT_SYMBOLS.join("");
+    const symbolSet = new Set(DIGIT_SYMBOLS);
+
+    // Decode: replace each cipher symbol with its digit
+    // Also detect runs of consecutive symbols and decode them as numbers
+    let decoded = "";
+    let currentRun = "";
+
+    for (const ch of text) {
+      if (symbolSet.has(ch)) {
+        currentRun += ch;
+        decoded += reverseMap[ch];
+      } else {
+        if (currentRun.length > 0) {
+          currentRun = "";
+        }
+        decoded += ch;
+      }
+    }
+
+    res.json({
+      original: text,
+      decoded,
+      // Also provide a highlighted version showing the mapping
+      explanation: `تم فك تشفير النص. تم استبدال الرموز (${
+        DIGIT_SYMBOLS.join("، ")
+      }) بالأرقام المقابلة (${DIGIT_SYMBOLS.map((_, i) => i).join("، ")}).`
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const ARABIC_FONT = process.env.ARABIC_FONT || "C:/Windows/Fonts/arial.ttf";
+
 app.get("/api/cipher/download", auth, commanderOnly, async (req, res) => {
-  const html = `<!DOCTYPE html>
-<html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>دليل فك التشفير - كتيبة 20</title>
-<style>
-body{font-family:'Tahoma',sans-serif;background:#1a1a1a;color:#e8e0d0;padding:40px;max-width:600px;margin:auto}
-h1{color:#d4a843;font-size:20px;text-align:center;border-bottom:2px solid #d4a843;padding-bottom:10px}
-table{width:100%;border-collapse:collapse;margin:20px 0}
-th{background:#d4a84320;color:#d4a843;padding:10px;font-size:14px}
-td{text-align:center;padding:12px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:16px}
-.sym{font-size:32px;font-family:monospace;letter-spacing:4px}
-.note{background:rgba(212,168,67,0.08);padding:16px;border-radius:8px;font-size:13px;line-height:2;margin:20px 0}
-.footer{text-align:center;font-size:11px;color:rgba(232,224,208,0.3);margin-top:30px}
-</style></head><body>
-<h1>🔐 دليل فك التشفير<br/><span style="font-size:13px;color:rgba(232,224,208,0.4);font-weight:400">كتيبة 20 — وثيقة سرية للقائد فقط</span></h1>
-<table><tr><th>الرمز</th><th>الرقم</th><th>الرمز</th><th>الرقم</th></tr>
-${[0,2,4,6,8].map(i => `<tr><td class="sym">${DIGIT_SYMBOLS[i]}</td><td>= ${i}</td><td class="sym">${DIGIT_SYMBOLS[i+1]}</td><td>= ${i+1}</td></tr>`).join('')}
-</table>
-<div class="note">
-<strong>طريقة الاستخدام:</strong><br/>
-كل رقم في النظام (درجات، إحصائيات، أعداد) يتم تحويله باستبدال كل رقم بالرمز المقابل له في الجدول أعلاه.<br/>
-مثال: الدرجة ٨٥ تظهر كـ <span class="sym">${DIGIT_SYMBOLS[8]}${DIGIT_SYMBOLS[5]}</span> (٨→${DIGIT_SYMBOLS[8]}، ٥→${DIGIT_SYMBOLS[5]})<br/>
-مثال: ١٠٠ تظهر كـ <span class="sym">${DIGIT_SYMBOLS[1]}${DIGIT_SYMBOLS[0]}${DIGIT_SYMBOLS[0]}</span><br/>
-مثال: ٥٠ تظهر كـ <span class="sym">${DIGIT_SYMBOLS[5]}${DIGIT_SYMBOLS[0]}</span>
-</div>
-<div class="footer">تم الإنشاء في ${new Date().toLocaleDateString('ar-EG')} — للقائد فقط</div>
-</body></html>`;
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="decoder-battalion20.html"');
-  res.send(html);
+  try {
+    const doc = new PDFDocument({
+      size: "A4",
+      margin: 50,
+      info: { Title: "دليل فك التشفير - كتيبة 20", Author: "قائد كتيبة 20" }
+    });
+
+    let buffers = [];
+    doc.on("data", (chunk) => buffers.push(chunk));
+    doc.on("end", () => {
+      const pdf = Buffer.concat(buffers);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", 'attachment; filename="decoder-battalion20.pdf"');
+      res.send(pdf);
+    });
+
+    // Register Arabic-supporting font
+    doc.registerFont("Arabic", ARABIC_FONT);
+
+    // Title
+    doc.font("Arabic").fontSize(22).fillColor("#d4a843");
+    doc.text("دليل فك التشفير", { align: "right" });
+    doc.fontSize(11).fillColor("#999");
+    doc.text("كتيبة 20 — وثيقة سرية للقائد فقط", { align: "right" });
+    doc.moveDown(1.5);
+
+    // Table header
+    const tableTop = doc.y;
+    const colW = 100;
+    const rowH = 28;
+    const tableX = doc.page.width - 50 - colW * 4;
+
+    // Draw table borders
+    doc.fontSize(12).fillColor("#d4a843");
+    const headers = ["الرمز", "الرقم", "الرمز", "الرقم"];
+    headers.forEach((h, i) => {
+      doc.rect(tableX + i * colW, tableTop, colW, rowH).fill("#d4a84320");
+      doc.fillColor("#d4a843");
+      doc.text(h, tableX + i * colW + colW / 2, tableTop + 8, { align: "center", width: colW });
+    });
+
+    // Table rows
+    doc.fontSize(14).fillColor("#e8e0d0");
+    const rows = [0, 2, 4, 6, 8];
+    rows.forEach((i, ri) => {
+      const y = tableTop + rowH + ri * rowH;
+      // Row background
+      doc.rect(tableX, y, colW * 4, rowH).fill(ri % 2 === 0 ? "#ffffff08" : "#ffffff00");
+      // Symbols
+      [
+        { sym: DIGIT_SYMBOLS[i], num: i },
+        { sym: DIGIT_SYMBOLS[i + 1], num: i + 1 },
+      ].forEach((item, ci) => {
+        const x = tableX + ci * (colW * 2);
+        doc.fillColor("#e8e0d0").fontSize(22);
+        doc.text(item.sym, x + colW / 2, y + 2, { align: "center", width: colW });
+        doc.fillColor("#aaa").fontSize(14);
+        doc.text(`= ${item.num}`, x + colW + colW / 2, y + 6, { align: "center", width: colW });
+      });
+      // Separator line
+      doc.strokeColor("#ffffff10").lineWidth(0.5).moveTo(tableX, y + rowH).lineTo(tableX + colW * 4, y + rowH).stroke();
+    });
+
+    doc.moveDown(2);
+
+    // Usage instructions
+    doc.fontSize(13).fillColor("#d4a843");
+    doc.text("طريقة الاستخدام:", { align: "right" });
+    doc.moveDown(0.5);
+    doc.fontSize(11).fillColor("#ccc");
+    doc.text(
+      "كل رقم في النظام (درجات، إحصائيات، أعداد) يتم تحويله باستبدال كل رقم بالرمز المقابل له في الجدول أعلاه.",
+      { align: "right" }
+    );
+    doc.moveDown(0.5);
+
+    // Examples
+    const examples = [
+      { label: "الدرجة 85 تظهر كـ", encoded: `${DIGIT_SYMBOLS[8]}${DIGIT_SYMBOLS[5]}`, detail: "(8→⊡، 5→■)" },
+      { label: "الدرجة 100 تظهر كـ", encoded: `${DIGIT_SYMBOLS[1]}${DIGIT_SYMBOLS[0]}${DIGIT_SYMBOLS[0]}`, detail: "" },
+      { label: "الدرجة 50 تظهر كـ", encoded: `${DIGIT_SYMBOLS[5]}${DIGIT_SYMBOLS[0]}`, detail: "" },
+    ];
+    examples.forEach((ex) => {
+      doc.fontSize(12).fillColor("#e8e0d0");
+      doc.text(`${ex.label} `, { continued: true, align: "right" });
+      doc.fontSize(16).fillColor("#d4a843");
+      doc.text(ex.encoded, { align: "right" });
+      doc.moveDown(0.3);
+    });
+
+    // Footer
+    doc.moveDown(2);
+    doc.fontSize(9).fillColor("rgba(232,224,208,0.3)");
+    doc.text(
+      `تم الإنشاء في ${new Date().toLocaleDateString("ar-EG")} — للقائد فقط`,
+      { align: "center" }
+    );
+
+    doc.end();
+  } catch (e) {
+    // Fallback: return simple text PDF
+    console.error("PDF generation error:", e);
+    // Generate minimal PDF manually
+    let pdf = Buffer.from(
+      `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n` +
+      `3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj\n` +
+      `4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n` +
+      `5 0 obj<</Length 44>>stream\nBT /F1 24 Tf 100 700 Td (Error) Tj ET\nendstream\nendobj\nxref\n0 6\n` +
+      `0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000266 00000 n \n` +
+      `0000000344 00000 n \ntrailer<</Size 6/Root 1 0 R>>\nstartxref\n418\n%%EOF\n`
+    );
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'attachment; filename="decoder-battalion20.pdf"');
+    res.send(pdf);
+  }
 });
 
 // ---- Excel Bulk Upload ----

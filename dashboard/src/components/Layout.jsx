@@ -127,7 +127,7 @@ export default function Layout({
               if (!res.ok) { alert('فشل التحميل'); return; }
               const blob = await res.blob();
               const url = URL.createObjectURL(blob);
-              const a = document.createElement('a'); a.href = url; a.download = 'decoder-battalion20.html';
+              const a = document.createElement('a'); a.href = url; a.download = 'decoder-battalion20.pdf';
               document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
             } catch(e) { alert('حدث خطأ في التحميل'); }
           }}

@@ -8,6 +8,7 @@
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "pdfkit": "^0.19.1",
     "pg": "^8.11.5",
     "serverless-http": "^4.0.0",
     "web-push": "^3.6.7"

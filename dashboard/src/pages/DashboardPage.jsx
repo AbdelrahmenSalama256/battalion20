@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { encNum } from "../utils/cipher";
+import CipherDecoder from "../components/CipherDecoder";
 import {
   LineChart,
   BarChart,
@@ -667,6 +668,9 @@ export default function DashboardPage({
           </div>
         ))}
       </div>
+
+      {/* Cipher Decoder — commander only */}
+      {user?.role === 'commander' && <CipherDecoder />}
     </div>
   );
 }
