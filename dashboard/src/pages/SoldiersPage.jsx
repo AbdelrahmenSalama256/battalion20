@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import Modal from '../components/Modal';
 import ScoreBadge from '../components/ScoreBadge';
+import ExcelUpload from '../components/ExcelUpload';
 
 const STATUS_OPTIONS = [
   { value: 'active', label: 'نشط' },
@@ -28,6 +29,7 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
   const [statusFilter, setStatusFilter] = useState('');
   const [editSoldier, setEditSoldier] = useState(null);
   const [actionModal, setActionModal] = useState(null); // { soldier, type: 'distinction'|'punishment' }
+  const [showUpload, setShowUpload] = useState(false);
   const navigate = useNavigate();
 
   const filtered = soldiers.filter(s => {
@@ -48,10 +50,18 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h4 className="text-gold mb-0">الأفراد</h4>
-        <button onClick={() => setEditSoldier({})} className="btn btn-gold btn-sm">+ إضافة فرد</button>
+        <div className="d-flex gap-2">
+          {user?.role === 'commander' && <button onClick={() => setShowUpload(p => !p)} className="btn btn-outline-gold btn-sm">📥 رفع Excel</button>}
+          <button onClick={() => setEditSoldier({})} className="btn btn-gold btn-sm">+ إضافة فرد</button>
+        </div>
       </div>
+      {showUpload && (
+        <div className="mb-4">
+          <ExcelUpload onDone={() => { setShowUpload(false); onRefresh?.(); }} />
+        </div>
+      )}
 
       {/* Filters */}
       <div className="d-flex gap-2 mb-3 flex-wrap">

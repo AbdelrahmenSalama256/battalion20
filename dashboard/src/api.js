@@ -141,11 +141,14 @@ export const api = {
   cancelLeave: (id) => req('PATCH', `/leaves/${id}/cancel`),
   getPersonnelDashboard: () => req('GET', '/leaves/dashboard'),
 
-  // AI
-  aiChat: (message) => req('POST', '/ai/chat', { message }),
-
   // Results
   getResultsStats: () => req('GET', '/results/stats'),
+
+  // Cipher
+  getDecoder: () => req('GET', '/cipher/decoder'),
+
+  // Bulk upload
+  bulkUpload: (soldiers) => req('POST', '/soldiers/bulk-upload', { soldiers }),
 
   // Admin
   seed: () => req('POST', '/admin/seed'),

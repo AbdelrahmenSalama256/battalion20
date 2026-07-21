@@ -1437,6 +1437,22 @@ us.post("/", auth, commanderOnly, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+us.patch("/:id", auth, async (req, res) => {
+  try {
+    const { name, rankId } = req.body;
+    if (req.user.id !== req.params.id && req.user.role !== 'commander')
+      return res.status(403).json({ error: "غير مصرح" });
+    const sets = []; const vals = []; let i = 1;
+    if (name) { sets.push(`name=$${i}`); vals.push(name); i++; }
+    if (rankId) { sets.push(`rank_id=$${i}`); vals.push(rankId); i++; }
+    if (!sets.length) return res.status(400).json({ error: "لا توجد بيانات" });
+    vals.push(req.params.id);
+    const { rows } = await pool.query(`UPDATE users SET ${sets.join(',')} WHERE id=$${i} RETURNING id,name,username,role,rank_id,permissions,is_active`, vals);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 us.patch("/:id/password", auth, commanderOnly, async (req, res) => {
   try {
     if (!req.body.password)
@@ -1520,128 +1536,74 @@ app.post("/api/admin/seed", auth, commanderOnly, async (req, res) => {
   }
 });
 
-// ---- AI Chat (Text-to-SQL) ----
-app.post("/api/ai/chat", auth, async (req, res) => {
+// ---- Cipher Decoder (commander only) ----
+app.get("/api/cipher/decoder", auth, commanderOnly, async (req, res) => {
+  const DIGIT_MAP = ['⊡', '─', '═', '▬', '●', '■', '▲', '▼', '◆', '◀'];
+  res.json({
+    title: "دليل فك التشفير - كتيبة 20",
+    mapping: DIGIT_MAP.map((sym, i) => ({ symbol: sym, digit: i })),
+    note: "كل رقم يظهر في النظام يتم تحويله باستخدام هذا الجدول. استبدل كل رمز بالرقم المقابل له.",
+  });
+});
+
+// ---- Excel Bulk Upload ----
+app.post("/api/soldiers/bulk-upload", auth, commanderOnly, async (req, res) => {
   try {
-    const { message } = req.body;
-    if (!message) return res.status(400).json({ error: "الرسالة مطلوبة" });
+    const { soldiers } = req.body;
+    if (!soldiers || !soldiers.length) return res.status(400).json({ error: "لا توجد بيانات" });
 
-    const schema = [
-      { table: "soldiers", columns: "id (uuid), name, military_id, rank_id (→ranks), weapon_id (→weapons), specialty_id (→specialties), status (نشط/إجازة/مأمورية/أخرى), status_notes, enlistment_date, notes, created_at", desc: "الجنود/الأفراد" },
-      { table: "evaluations", columns: "id, soldier_id (→soldiers), section_key (general/fitness/shooting/discipline/specialties), score (0-100), max_score, notes, evaluated_by (→users), created_at", desc: "التقييمات والتمييزات" },
-      { table: "distinctions", columns: "id, soldier_id, section_key, reason, color, given_by, is_confirmed, created_at", desc: "التمييزات (تكريم)" },
-      { table: "distinction_confirmations", columns: "id, distinction_id, user_id, confirmed_at", desc: "تأكيدات التمييز" },
-      { table: "punishments", columns: "id, soldier_id, section_key, reason, color, given_by, created_at", desc: "الجزاءات/العقوبات" },
-      { table: "leaves", columns: "id, soldier_id, start_date, end_date, leave_type, notes, status (pending/approved/rejected/cancelled/returned), return_confirmed, created_at", desc: "الإجازات" },
-      { table: "exams", columns: "id, title, section_key, specialty_id, focus_points (text[]), notes, max_score, is_active, created_at", desc: "الاختبارات" },
-      { table: "exam_items", columns: "id, exam_id (→exams), text, max_score, sort_order", desc: "بنود الاختبارات" },
-      { table: "results", columns: "id, soldier_id, exam_id, total_score (0-100), fitness_score, specialty_score, discipline_score, result_type, exam_date, entered_by, notes", desc: "نتائج الاختبارات" },
-      { table: "fitness_results", columns: "id, soldier_id, exercise_id, score_value, score_percent", desc: "نتائج اللياقة" },
-      { table: "sections", columns: "id, key (specialties/general/fitness/shooting/discipline), name, icon, sort_order", desc: "الأقسام (ثابتة)" },
-      { table: "specialties", columns: "id, name, weapon_id (→weapons), description, is_active", desc: "التخصصات" },
-      { table: "soldier_specialties", columns: "soldier_id, specialty_id, assigned_at", desc: "تخصصات الجنود (علاقة M:M)" },
-      { table: "ranks", columns: "id, type_id (→rank_types), name, sort_order", desc: "الرتب" },
-      { table: "rank_types", columns: "id, name (ضباط/صف ضباط/جنود), color", desc: "أنواع الرتب" },
-      { table: "weapons", columns: "id, name, icon, color", desc: "الأسلحة" },
-      { table: "users", columns: "id, name, username, role (officer/commander/admin/nco), is_active, permissions (jsonb), rank_id", desc: "المستخدمين" },
-      { table: "announcements", columns: "id, title, content, priority, created_by, is_active, created_at", desc: "الإعلانات" },
-      { table: "notifications", columns: "id, type, message, evaluated_id (→soldiers), is_read, created_at", desc: "الإشعارات" },
-    ];
+    const results = { created: 0, skipped: 0, errors: [] };
 
-    const systemPrompt = `أنت مساعد ذكي لنظام إدارة كتيبة عسكرية (Battalion 20). مهامك:
-1. تحويل أسئلة المستخدم إلى استعلامات SQL
-2. تنفيذ الأوامر (إضافة، تعديل، حذف) حسب صلاحية المستخدم
-3. شرح النتائج بطريقة واضحة بالعربية
-
-قاعدة البيانات تحتوي على الجداول التالية:
-${schema.map(t => `جدول ${t.table} (${t.desc}): أعمدة: ${t.columns}`).join('\n')}
-
-قواعد مهمة:
-- استخدم دائمًا $$parameter$$ للمعاملات النصية (ليس رقمية)
-- ${req.user.role !== 'commander' ? 'للمستخدمين العاديين: SELECT فقط. لا تنفذ INSERT/UPDATE/DELETE إلا إذا كان الأمر واضحًا.' : 'لآمر الكتيبة: كل الأوامر مسموحة (SELECT, INSERT, UPDATE, DELETE).'}
-- رتب النتائج تنازليًا حسب created_at ما لم يطلب المستخدم غير ذلك
-- استخدم LIMIT 20 كحد أقصى للنتائج
-- section_key هي: general (عام), fitness (لياقة), shooting (رماية), discipline (انضباط), specialties (تخصصات)
-- حالة الجندي: نشط (active), إجازة (leave), مأمورية (mission), أخرى (other)
-- دور المستخدم: commander (آمر), officer (ضابط), nco (صف ضابط), admin
-- التقييمات مخزنة في جدول evaluations مع section_key والدرجة score
-
-أعد الرد بصيغة JSON:
-{ "sql": "الاستعلام المنفذ", "explanation": "شرح بالعربية", "data": [النتائج] }`;
-
-    let aiResponse;
-    if (process.env.OPENAI_API_KEY) {
-      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-        body: JSON.stringify({
-          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `السؤال: ${message}\n\nأعد الرد بصيغة JSON فقط: { "sql": "...", "explanation": "...", "data": [...] }` }
-          ],
-          temperature: 0.1,
-          max_tokens: 2000,
-        }),
-      });
-      if (!resp.ok) {
-        const err = await resp.text();
-        return res.status(500).json({ error: `OpenAI error: ${err}` });
-      }
-      const json = await resp.json();
-      aiResponse = json.choices?.[0]?.message?.content;
-    } else if (process.env.OLLAMA_URL) {
-      const resp = await fetch(`${process.env.OLLAMA_URL}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: process.env.OLLAMA_MODEL || "llama3",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `السؤال: ${message}` }
-          ],
-          stream: false,
-        }),
-      });
-      if (!resp.ok) {
-        const err = await resp.text();
-        return res.status(500).json({ error: `Ollama error: ${err}` });
-      }
-      const json = await resp.json();
-      aiResponse = json.message?.content;
-    } else {
-      return res.status(400).json({ error: "لم يتم إعداد مزود AI. قم بتعيين OPENAI_API_KEY أو OLLAMA_URL في البيئة." });
-    }
-
-    // Parse the AI response
-    let parsed;
-    try {
-      const cleaned = aiResponse.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      return res.json({ response: aiResponse, sql: null, data: null });
-    }
-
-    // Execute SQL if present
-    let data = null;
-    if (parsed.sql) {
-      const sql = parsed.sql.trim();
-      const upper = sql.toUpperCase();
-      if (req.user.role !== 'commander' && !upper.startsWith('SELECT')) {
-        return res.status(403).json({ error: "ليس لديك صلاحية لتنفيذ هذا الأمر" });
-      }
-      if (!upper.startsWith('SELECT') && !upper.startsWith('INSERT') && !upper.startsWith('UPDATE') && !upper.startsWith('DELETE')) {
-        return res.json({ response: parsed.explanation, sql: parsed.sql, data: null });
-      }
+    for (const row of soldiers) {
       try {
-        const result = await pool.query(sql);
-        data = upper.startsWith('SELECT') ? result.rows : { affected: result.rowCount, message: "تم بنجاح" };
+        const name = row.name || row.الاسم;
+        const militaryId = row.military_id || row.الرقم_العسكري || row["الرقم العسكري"];
+        const specialtyName = row.specialty || row.التخصص;
+        const weaponName = row.weapon || row.السلاح;
+
+        if (!name || !militaryId) { results.skipped++; continue; }
+
+        // Find or create weapon
+        let weaponId = null;
+        if (weaponName) {
+          let w = await db.query("SELECT id FROM weapons WHERE name=$1", [weaponName]);
+          if (!w.rows.length) {
+            w = await db.query("INSERT INTO weapons(name) VALUES($1) RETURNING id", [weaponName]);
+          }
+          weaponId = w.rows[0].id;
+        }
+
+        // Find or create specialty
+        let specialtyId = null;
+        if (specialtyName) {
+          let sp = await db.query("SELECT id FROM specialties WHERE name=$1", [specialtyName]);
+          if (!sp.rows.length) {
+            sp = await db.query("INSERT INTO specialties(name,weapon_id) VALUES($1,$2) RETURNING id", [specialtyName, weaponId]);
+          }
+          specialtyId = sp.rows[0].id;
+        }
+
+        // Get lowest rank
+        const { rows: ranks } = await db.query("SELECT id FROM ranks ORDER BY sort_order LIMIT 1");
+        const rankId = ranks.length ? ranks[0].id : null;
+
+        // Check if soldier already exists
+        const exist = await db.query("SELECT id FROM soldiers WHERE military_id=$1", [militaryId]);
+        if (exist.rows.length) {
+          await db.query("UPDATE soldiers SET name=$1,weapon_id=$2,specialty_id=$3 WHERE id=$4",
+            [name, weaponId, specialtyId, exist.rows[0].id]);
+          results.created++;
+        } else {
+          await db.query("INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id) VALUES($1,$2,$3,$4,$5)",
+            [name, militaryId, rankId, weaponId, specialtyId]);
+          results.created++;
+        }
       } catch (e) {
-        return res.json({ response: `${parsed.explanation}\n\n⚠️ خطأ في تنفيذ الاستعلام: ${e.message}`, sql: parsed.sql, data: null });
+        results.errors.push({ row: row.name || row.الاسم, error: e.message });
       }
     }
 
-    res.json({ response: parsed.explanation, sql: parsed.sql, data });
+    res.json(results);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

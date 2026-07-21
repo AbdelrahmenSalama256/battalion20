@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { encNum } from "../utils/cipher";
 import {
-  ComposedChart,
+  LineChart,
   BarChart,
   Line,
   Bar,
@@ -91,9 +92,9 @@ function StatCard({ icon, label, value, trend, trendLabel, sub, delay }) {
         </div>
         <div
           className="text-gold-bright fw-bold"
-          style={{ fontSize: 28, lineHeight: 1.1 }}
+          style={{ fontSize: 28, lineHeight: 1.1, fontFamily: 'monospace', letterSpacing: '0.08em' }}
         >
-          {value}
+          {typeof value === 'number' ? encNum(value) : value}
         </div>
         {sub && (
           <div
@@ -145,16 +146,16 @@ function CategCard({ cat, data, delay }) {
         </div>
         <div
           className="fw-bold"
-          style={{ fontSize: 22, color: cat.color, lineHeight: 1 }}
+          style={{ fontSize: 22, color: cat.color, lineHeight: 1, fontFamily: 'monospace', letterSpacing: '0.08em' }}
         >
-          {last}
+          {encNum(last)}
         </div>
         <div
           className="small mt-1"
           style={{ color: up ? "#4ecdc4" : "#ff6b6b" }}
         >
           {up ? "⬆" : "⬇"} {change >= 0 ? "+" : ""}
-          {change}
+          {encNum(Math.abs(change))}
         </div>
       </div>
     </div>
@@ -200,7 +201,7 @@ const CustomTooltip = ({ active, payload, label }) => {
               display: "inline-block",
             }}
           />
-          {p.name}: <strong>{p.value}</strong>
+          {p.name}: <strong style={{ fontFamily: 'monospace', letterSpacing: '0.08em' }}>{encNum(p.value)}</strong>
         </div>
       ))}
     </div>
@@ -387,7 +388,7 @@ export default function DashboardPage({
           </h6>
         </div>
         <ResponsiveContainer width="100%" height={300}>
-          <ComposedChart
+          <LineChart
             data={CHART_DATA}
             margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
           >
@@ -430,28 +431,18 @@ export default function DashboardPage({
                 </span>
               )}
             />
-            {CATEGORIES.map((c, i) =>
-              i < 2 ? (
-                <Bar
-                  key={c.key}
-                  dataKey={c.key}
-                  fill={c.color + "cc"}
-                  barSize={16}
-                  radius={[2, 2, 0, 0]}
-                />
-              ) : (
-                <Line
-                  key={c.key}
-                  type="monotone"
-                  dataKey={c.key}
-                  stroke={c.color}
-                  strokeWidth={3}
-                  dot={{ r: 5, fill: c.color, stroke: "#0a0f07", strokeWidth: 2 }}
-                  activeDot={{ r: 7 }}
-                />
-              )
-            )}
-          </ComposedChart>
+            {CATEGORIES.map((c) => (
+              <Line
+                key={c.key}
+                type="monotone"
+                dataKey={c.key}
+                stroke={c.color}
+                strokeWidth={3}
+                dot={{ r: 5, fill: c.color, stroke: "#0a0f07", strokeWidth: 2 }}
+                activeDot={{ r: 7 }}
+              />
+            ))}
+          </LineChart>
         </ResponsiveContainer>
       </div>
 
@@ -668,9 +659,9 @@ export default function DashboardPage({
               </div>
               <div
                 className="fw-bold text-gold-bright"
-                style={{ fontSize: 14 }}
+                style={{ fontSize: 14, fontFamily: 'monospace', letterSpacing: '0.08em' }}
               >
-                {x.value}
+                {typeof x.value === 'number' ? encNum(x.value) : x.value}
               </div>
             </div>
           </div>
