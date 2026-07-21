@@ -120,8 +120,16 @@ export default function Layout({
         </nav>
         {user?.role === 'commander' && (
           <button onClick={async () => {
-            try { window.open(`${import.meta.env.VITE_API_URL || '/api'}/cipher/download?t=${Date.now()}`, '_blank'); }
-            catch(e) { alert('حدث خطأ في التحميل'); }
+            try {
+              const token = localStorage.getItem('b20_token');
+              const base = import.meta.env.VITE_API_URL || '/api';
+              const res = await fetch(`${base}/cipher/download`, { headers: { Authorization: `Bearer ${token}` } });
+              if (!res.ok) { alert('فشل التحميل'); return; }
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a'); a.href = url; a.download = 'decoder-battalion20.html';
+              document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+            } catch(e) { alert('حدث خطأ في التحميل'); }
           }}
           className="sidebar-btn d-flex align-items-center gap-2 w-100 border-0 py-2 px-3 text-muted-military small"
           style={{ background: "none", textAlign: "right", borderTop: '1px solid rgba(255,255,255,0.04)' }}>

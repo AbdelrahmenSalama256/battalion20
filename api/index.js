@@ -1588,6 +1588,8 @@ app.post("/api/soldiers/bulk-upload", auth, commanderOnly, async (req, res) => {
         const militaryId = row.military_id || row.الرقم_العسكري || row["الرقم العسكري"];
         const specialtyName = row.specialty || row.التخصص;
         const weaponName = row.weapon || row.السلاح;
+        const rankName = row.rank || row.الرتبة;
+        const status = row.status || row.الحالة;
 
         if (!name || !militaryId) { results.skipped++; continue; }
 
@@ -1611,19 +1613,30 @@ app.post("/api/soldiers/bulk-upload", auth, commanderOnly, async (req, res) => {
           specialtyId = sp.rows[0].id;
         }
 
-        // Get lowest rank
-        const { rows: ranks } = await db.query("SELECT id FROM ranks ORDER BY sort_order LIMIT 1");
-        const rankId = ranks.length ? ranks[0].id : null;
+        // Find rank by name or use lowest
+        let rankId = null;
+        if (rankName) {
+          const r = await db.query("SELECT id FROM ranks WHERE name=$1", [rankName]);
+          if (r.rows.length) rankId = r.rows[0].id;
+        }
+        if (!rankId) {
+          const { rows: ranks } = await db.query("SELECT id FROM ranks ORDER BY sort_order LIMIT 1");
+          rankId = ranks.length ? ranks[0].id : null;
+        }
+
+        // Validate status
+        const validStatuses = ['active','leave','mission','other'];
+        const finalStatus = status && validStatuses.includes(status.toLowerCase()) ? status.toLowerCase() : null;
 
         // Check if soldier already exists
         const exist = await db.query("SELECT id FROM soldiers WHERE military_id=$1", [militaryId]);
         if (exist.rows.length) {
-          await db.query("UPDATE soldiers SET name=$1,weapon_id=$2,specialty_id=$3 WHERE id=$4",
-            [name, weaponId, specialtyId, exist.rows[0].id]);
+          await db.query("UPDATE soldiers SET name=$1,weapon_id=$2,specialty_id=$3,rank_id=$4,status=COALESCE($5,status) WHERE id=$6",
+            [name, weaponId, specialtyId, rankId, finalStatus, exist.rows[0].id]);
           results.created++;
         } else {
-          await db.query("INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id) VALUES($1,$2,$3,$4,$5)",
-            [name, militaryId, rankId, weaponId, specialtyId]);
+          await db.query("INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id,status) VALUES($1,$2,$3,$4,$5,$6)",
+            [name, militaryId, rankId, weaponId, specialtyId, finalStatus || 'active']);
           results.created++;
         }
       } catch (e) {
