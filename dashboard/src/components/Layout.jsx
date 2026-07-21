@@ -33,13 +33,6 @@ const ALL_TABS = [
     path: "/manage",
     commanderOnly: true,
   },
-  {
-    id: "cipher",
-    label: "فك التشفير",
-    icon: "🔐",
-    path: "/cipher",
-    commanderOnly: true,
-  },
   { id: "profile", label: "حسابي", icon: "👤", path: "/profile" },
 ];
 
@@ -125,6 +118,17 @@ export default function Layout({
             </button>
           ))}
         </nav>
+        {user?.role === 'commander' && (
+          <button onClick={async () => {
+            try { window.open(`${import.meta.env.VITE_API_URL || '/api'}/cipher/download?t=${Date.now()}`, '_blank'); }
+            catch(e) { alert('حدث خطأ في التحميل'); }
+          }}
+          className="sidebar-btn d-flex align-items-center gap-2 w-100 border-0 py-2 px-3 text-muted-military small"
+          style={{ background: "none", textAlign: "right", borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+            <span className="fs-6" style={{ width: 24, textAlign: "center" }}>📄</span>
+            <span style={{ fontSize: 11 }}>تحميل دليل فك التشفير</span>
+          </button>
+        )}
         <button
           onClick={() => {
             onLogout();

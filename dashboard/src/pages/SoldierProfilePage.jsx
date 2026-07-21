@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import ScoreBadge from '../components/ScoreBadge';
+import { encNum } from '../utils/cipher';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const SECTION_NAMES = {
@@ -99,15 +100,15 @@ export default function SoldierProfilePage({ user, onRefresh }) {
           </div>
           <div className="text-center">
             <div className="small text-muted-military">التمييزات</div>
-            <div className="fs-4 fw-bold text-gold">{distinctions.length}</div>
+            <div className="fs-4 fw-bold text-gold" style={{fontFamily:'monospace',letterSpacing:'0.08em'}}>{encNum(distinctions.length)}</div>
           </div>
           <div className="text-center">
             <div className="small text-muted-military">الجزاءات</div>
-            <div className="fs-4 fw-bold text-danger">{punishments.length}</div>
+            <div className="fs-4 fw-bold text-danger" style={{fontFamily:'monospace',letterSpacing:'0.08em'}}>{encNum(punishments.length)}</div>
           </div>
           <div className="text-center">
             <div className="small text-muted-military">التمييزات</div>
-            <div className="fs-4 fw-bold text-info">{evaluations.length}</div>
+            <div className="fs-4 fw-bold text-info" style={{fontFamily:'monospace',letterSpacing:'0.08em'}}>{encNum(evaluations.length)}</div>
           </div>
         </div>
       </div>
@@ -157,9 +158,9 @@ export default function SoldierProfilePage({ user, onRefresh }) {
                 <div key={sk} className="col-6 col-md-4 col-lg">
                   <div className="card border-military p-3 text-center">
                     <div className="small text-muted-military">{SECTION_NAMES[sk]}</div>
-                    <div className="fs-3 fw-bold text-gold">{ss ? ss.avg_score : '-'}</div>
-                    <div className="small text-muted-military">{ss ? ss.eval_count : 0} تمييز</div>
-                    {ss && <div className="small text-muted-military">الأعلى: {ss.max_score} | الأدنى: {ss.min_score}</div>}
+                    <div className="fs-3 fw-bold text-gold" style={{fontFamily:'monospace',letterSpacing:'0.08em'}}>{ss ? encNum(ss.avg_score) : '-'}</div>
+                    <div className="small text-muted-military" style={{fontFamily:'monospace',letterSpacing:'0.08em'}}>{ss ? encNum(ss.eval_count) : encNum(0)} تقييم</div>
+                    {ss && <div className="small text-muted-military" style={{fontFamily:'monospace',letterSpacing:'0.08em'}}>الأعلى: {encNum(ss.max_score)} | الأدنى: {encNum(ss.min_score)}</div>}
                   </div>
                 </div>
               );

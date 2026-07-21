@@ -1536,14 +1536,42 @@ app.post("/api/admin/seed", auth, commanderOnly, async (req, res) => {
   }
 });
 
-// ---- Cipher Decoder (commander only) ----
-app.get("/api/cipher/decoder", auth, commanderOnly, async (req, res) => {
-  const DIGIT_MAP = ['⊡', '─', '═', '▬', '●', '■', '▲', '▼', '◆', '◀'];
-  res.json({
-    title: "دليل فك التشفير - كتيبة 20",
-    mapping: DIGIT_MAP.map((sym, i) => ({ symbol: sym, digit: i })),
-    note: "كل رقم يظهر في النظام يتم تحويله باستخدام هذا الجدول. استبدل كل رمز بالرقم المقابل له.",
-  });
+// ---- Cipher endpoints (commander only) ----
+const DIGIT_SYMBOLS = ['⊡', '─', '═', '▬', '●', '■', '▲', '▼', '◆', '◀'];
+
+app.get("/api/cipher/map", auth, commanderOnly, async (req, res) => {
+  res.json({ mapping: DIGIT_SYMBOLS.map((symbol, digit) => ({ symbol, digit })) });
+});
+
+app.get("/api/cipher/download", auth, commanderOnly, async (req, res) => {
+  const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>دليل فك التشفير - كتيبة 20</title>
+<style>
+body{font-family:'Tahoma',sans-serif;background:#1a1a1a;color:#e8e0d0;padding:40px;max-width:600px;margin:auto}
+h1{color:#d4a843;font-size:20px;text-align:center;border-bottom:2px solid #d4a843;padding-bottom:10px}
+table{width:100%;border-collapse:collapse;margin:20px 0}
+th{background:#d4a84320;color:#d4a843;padding:10px;font-size:14px}
+td{text-align:center;padding:12px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:16px}
+.sym{font-size:32px;font-family:monospace;letter-spacing:4px}
+.note{background:rgba(212,168,67,0.08);padding:16px;border-radius:8px;font-size:13px;line-height:2;margin:20px 0}
+.footer{text-align:center;font-size:11px;color:rgba(232,224,208,0.3);margin-top:30px}
+</style></head><body>
+<h1>🔐 دليل فك التشفير<br/><span style="font-size:13px;color:rgba(232,224,208,0.4);font-weight:400">كتيبة 20 — وثيقة سرية للقائد فقط</span></h1>
+<table><tr><th>الرمز</th><th>الرقم</th><th>الرمز</th><th>الرقم</th></tr>
+${[0,2,4,6,8].map(i => `<tr><td class="sym">${DIGIT_SYMBOLS[i]}</td><td>= ${i}</td><td class="sym">${DIGIT_SYMBOLS[i+1]}</td><td>= ${i+1}</td></tr>`).join('')}
+</table>
+<div class="note">
+<strong>طريقة الاستخدام:</strong><br/>
+كل رقم في النظام (درجات، إحصائيات، أعداد) يتم تحويله باستبدال كل رقم بالرمز المقابل له في الجدول أعلاه.<br/>
+مثال: الدرجة ٨٥ تظهر كـ <span class="sym">${DIGIT_SYMBOLS[8]}${DIGIT_SYMBOLS[5]}</span> (٨→${DIGIT_SYMBOLS[8]}، ٥→${DIGIT_SYMBOLS[5]})<br/>
+مثال: ١٠٠ تظهر كـ <span class="sym">${DIGIT_SYMBOLS[1]}${DIGIT_SYMBOLS[0]}${DIGIT_SYMBOLS[0]}</span><br/>
+مثال: ٥٠ تظهر كـ <span class="sym">${DIGIT_SYMBOLS[5]}${DIGIT_SYMBOLS[0]}</span>
+</div>
+<div class="footer">تم الإنشاء في ${new Date().toLocaleDateString('ar-EG')} — للقائد فقط</div>
+</body></html>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="decoder-battalion20.html"');
+  res.send(html);
 });
 
 // ---- Excel Bulk Upload ----

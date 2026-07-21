@@ -145,7 +145,8 @@ export const api = {
   getResultsStats: () => req('GET', '/results/stats'),
 
   // Cipher
-  getDecoder: () => req('GET', '/cipher/decoder'),
+  getCipherMap: () => req('GET', '/cipher/map'),
+  downloadDecoder: () => req('GET', '/cipher/download'),
 
   // Bulk upload
   bulkUpload: (soldiers) => req('POST', '/soldiers/bulk-upload', { soldiers }),

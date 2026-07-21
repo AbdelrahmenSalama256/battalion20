@@ -19,7 +19,6 @@ import ExamsPage from './pages/ExamsPage';
 import AnnouncementsPage from './pages/AnnouncementsPage';
 import ManagePage from './pages/ManagePage';
 import PersonnelPage from './pages/PersonnelPage';
-import DecoderPage from './pages/DecoderPage';
 
 function SectionDetailGuard({ user, specialties, soldiers }) {
   const { key } = useParams();
@@ -204,9 +203,6 @@ export default function App() {
         } />
         <Route path="/personnel" element={
           <PersonnelPage user={u} soldiers={data.soldiers} />
-        } />
-        <Route path="/cipher" element={
-          u?.role === 'commander' ? <DecoderPage user={u} /> : <Navigate to="/" />
         } />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
