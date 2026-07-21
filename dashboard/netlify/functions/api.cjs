@@ -9,13 +9,14 @@ const PDFDocument = require("pdfkit");
 const path = require("path");
 
 const DB_URL = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0] : undefined;
-const isLocal = DB_URL && DB_URL.includes("localhost");
+const isLocal = typeof process.env.VERCEL !== "undefined" ? false : (DB_URL && DB_URL.includes("localhost"));
 const pool = new Pool({
   connectionString: DB_URL,
   ssl: isLocal ? false : { rejectUnauthorized: false },
-  max: 5,
-  connectionTimeoutMillis: 3000,
-  query_timeout: 5000,
+  max: 2,
+  connectionTimeoutMillis: 10000,
+  query_timeout: 15000,
+  idleTimeoutMillis: 30000,
 });
 pool.on("error", (err) => {
   console.error("POOL ERROR:", err?.message || err);
@@ -1807,6 +1808,14 @@ app.use((err, req, res, next) => {
 });
 
 module.exports = app;
+app.get("/api/health/db", async (req, res) => {
+  try {
+    const r = await pool.query("SELECT 1 as ok");
+    res.json({ db: "connected", ok: r.rows[0].ok });
+  } catch (e) {
+    res.status(503).json({ db: "error", message: e.message });
+  }
+});
 // ---- Netlify handler ----
 const serverless = require("serverless-http");
 
@@ -1830,6 +1839,8 @@ async function ensureMigrations() {
 }
 
 exports.handler = serverless(async (req, res) => {
-  await ensureMigrations();
+  try {
+    if (!migrationsRun) { migrationsRun = true; ensureMigrations().catch(e => console.error("Migration error:", e.message)); }
+  } catch(e) {}
   return app(req, res);
 });
