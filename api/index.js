@@ -97,7 +97,7 @@ async function runMigrations() {
   await pool.query("CREATE TABLE IF NOT EXISTS punishments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, section_key VARCHAR(50) NOT NULL, specialty_id UUID REFERENCES specialties(id), reason TEXT NOT NULL, color VARCHAR(20) DEFAULT 'red', given_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())");
   await pool.query("CREATE TABLE IF NOT EXISTS distinction_confirmations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), distinction_id UUID NOT NULL, user_id UUID REFERENCES users(id), confirmed_at TIMESTAMPTZ DEFAULT NOW())");
   try { await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_distinction_confirmations_unique ON distinction_confirmations(distinction_id, user_id)"); } catch (e) {}
-  await pool.query("CREATE TABLE IF NOT EXISTS announcements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, content TEXT, priority VARCHAR(20) DEFAULT 'info', created_by UUID REFERENCES users(id), created_at TIMESTAMZ DEFAULT NOW())");
+  await pool.query("CREATE TABLE IF NOT EXISTS announcements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, content TEXT, priority VARCHAR(20) DEFAULT 'info', created_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())");
   console.log("Migrations done");
 }
 
@@ -216,7 +216,7 @@ app.all("/api/admin/setup", async (req, res) => {
       "CREATE TABLE IF NOT EXISTS exams (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, type VARCHAR(50), weapon_id UUID REFERENCES weapons(id), specialty_id UUID REFERENCES specialties(id), created_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())",
       "CREATE TABLE IF NOT EXISTS results (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), exam_id UUID REFERENCES exams(id), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, result_type VARCHAR(50) DEFAULT 'exam', total_score NUMERIC(6,2), fitness_score NUMERIC(6,2), specialty_score NUMERIC(6,2), discipline_score NUMERIC(6,2), notes TEXT, exam_date DATE, entered_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())",
       "CREATE TABLE IF NOT EXISTS fitness_exercises (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(200) NOT NULL, unit VARCHAR(50), higher_is_better BOOLEAN DEFAULT TRUE, pass_mark NUMERIC(5,2) DEFAULT 60)",
-      "CREATE TABLE IF NOT EXISTS announcements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, content TEXT, priority VARCHAR(20) DEFAULT 'info', created_by UUID REFERENCES users(id), created_at TIMESTAMZ DEFAULT NOW())",
+      "CREATE TABLE IF NOT EXISTS announcements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, content TEXT, priority VARCHAR(20) DEFAULT 'info', created_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())",
     ];
     for (const sql of coreTables) {
       try { await pool.query(sql); } catch (e) { console.log("Table skip:", e.message); }
