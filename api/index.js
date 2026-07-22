@@ -248,20 +248,22 @@ er.post("/login", async (req, res) => {
     let rows;
     try {
       const result = await db.query(
-        "SELECT u.id,u.name,u.username,u.password_hash,u.role,u.is_active,u.created_at,u.rank_id,u.permissions,u.avatar_url,r.name rank_name,r.sort_order rank_order FROM users u LEFT JOIN ranks r ON r.id=u.rank_id::uuid WHERE u.username=$1 AND u.is_active=true",
+        "SELECT u.id,u.name,u.username,u.password_hash,u.role,u.is_active,u.created_at,u.rank_id,u.permissions,u.avatar_url,r.name rank_name,r.sort_order rank_order FROM users u LEFT JOIN ranks r ON r.id=u.rank_id WHERE u.username=$1 AND u.is_active=true",
         [username],
       );
       rows = result.rows;
     } catch (dbErr) {
       return res.status(500).json({ error: `DB: ${dbErr.message}` });
     }
+    if (!rows || !rows.length)
+      return res.status(401).json({ error: "بيانات الدخول غير صحيحة" });
     let passwordOk;
     try {
       passwordOk = await bcrypt.compare(password, rows[0].password_hash);
     } catch (bcryptErr) {
       return res.status(500).json({ error: `BCRYPT: ${bcryptErr.message}` });
     }
-    if (!rows.length || !passwordOk)
+    if (!passwordOk)
       return res.status(401).json({ error: "بيانات الدخول غير صحيحة" });
     const u = rows[0];
     const token = jwt.sign(
@@ -1849,8 +1851,8 @@ app.post("/api/soldiers/bulk-upload", auth, commanderOnly, async (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error("Unhandled:", err);
-  res.status(500).json({ error: "حدث خطأ غير متوقع" });
+  console.error("Unhandled:", err?.message || err);
+  res.status(500).json({ error: err?.message || "حدث خطأ غير متوقع" });
 });
 
 module.exports = app;
