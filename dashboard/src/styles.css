@@ -127,3 +127,5 @@ html { scroll-behavior: smooth; }
     --bs-table-hover-bg: rgba(255, 255, 255, 0.03);
     background-color: #fff;
 }
+.modal-header .btn-close{margin-left: 0!important;margin-right: auto !important;}
+.modal-header{justify-content: space-between;}
