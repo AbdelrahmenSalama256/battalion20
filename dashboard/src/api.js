@@ -98,10 +98,17 @@ export const api = {
   // Ranks
   getRankTypes: () => req('GET', '/ranks/types'),
   getRanks: (typeId) => req('GET', `/ranks${typeId ? `?typeId=${typeId}` : ''}`),
+  createRank: (data) => req('POST', '/ranks', data),
+  updateRank: (id, data) => req('PUT', `/ranks/${id}`, data),
+  deleteRank: (id) => req('DELETE', `/ranks/${id}`),
+  createRankType: (data) => req('POST', '/ranks/types', data),
+  updateRankType: (id, data) => req('PUT', `/ranks/types/${id}`, data),
+  deleteRankType: (id) => req('DELETE', `/ranks/types/${id}`),
 
   // Weapons
   getWeapons: () => req('GET', '/weapons'),
   createWeapon: (data) => req('POST', '/weapons', data),
+  updateWeapon: (id, data) => req('PUT', `/weapons/${id}`, data),
   deleteWeapon: (id) => req('DELETE', `/weapons/${id}`),
 
   // Exams
@@ -156,4 +163,5 @@ export const api = {
 
   // Admin
   seed: () => req('POST', '/admin/seed'),
+  clearAll: () => req('POST', '/admin/clear-all'),
 };

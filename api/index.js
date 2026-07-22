@@ -751,6 +751,14 @@ wp.delete("/:id", auth, commanderOnly, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+wp.put("/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { name, icon } = req.body;
+    const { rows } = await db.query("UPDATE weapons SET name=COALESCE($1,name),icon=COALESCE($2,icon) WHERE id=$3 RETURNING *", [name || null, icon || null, req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.use("/api/weapons", wp);
 const sp = express.Router();
 sp.get("/", auth, async (req, res) => {
@@ -815,10 +823,10 @@ rk.get("/", auth, async (req, res) => {
     const { typeId } = req.query;
     const { rows } = typeId
       ? await db.query(
-          "SELECT * FROM ranks WHERE type_id=$1 ORDER BY sort_order",
+          "SELECT r.*,rt.name as type_name,rt.color as type_color FROM ranks r LEFT JOIN rank_types rt ON rt.id=r.type_id WHERE r.type_id=$1 ORDER BY r.sort_order",
           [typeId],
         )
-      : await db.query("SELECT * FROM ranks ORDER BY sort_order");
+      : await db.query("SELECT r.*,rt.name as type_name,rt.color as type_color FROM ranks r LEFT JOIN rank_types rt ON rt.id=r.type_id ORDER BY r.sort_order");
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -831,6 +839,52 @@ rk.get("/types", auth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+rk.post("/", auth, commanderOnly, async (req, res) => {
+  try {
+    const { name, typeId, sortOrder } = req.body;
+    if (!name) return res.status(400).json({ error: "يرجى إدخال الاسم" });
+    const { rows } = await db.query("INSERT INTO ranks(name,type_id,sort_order) VALUES($1,$2,$3) RETURNING *", [name, typeId || null, sortOrder || 0]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+rk.put("/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { name, typeId, sortOrder } = req.body;
+    const { rows } = await db.query("UPDATE ranks SET name=COALESCE($1,name),type_id=COALESCE($2,type_id),sort_order=COALESCE($3,sort_order) WHERE id=$4 RETURNING *", [name || null, typeId || null, sortOrder != null ? sortOrder : null, req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+rk.delete("/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { rowCount } = await db.query("DELETE FROM ranks WHERE id=$1", [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: "غير موجود" });
+    res.json({ message: "تم الحذف" });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+rk.post("/types", auth, commanderOnly, async (req, res) => {
+  try {
+    const { name, color } = req.body;
+    if (!name) return res.status(400).json({ error: "يرجى إدخال الاسم" });
+    const { rows } = await db.query("INSERT INTO rank_types(name,color) VALUES($1,$2) RETURNING *", [name, color || null]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+rk.put("/types/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { name, color } = req.body;
+    const { rows } = await db.query("UPDATE rank_types SET name=COALESCE($1,name),color=COALESCE($2,color) WHERE id=$3 RETURNING *", [name || null, color || null, req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+rk.delete("/types/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { rowCount } = await db.query("DELETE FROM rank_types WHERE id=$1", [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: "غير موجود" });
+    res.json({ message: "تم الحذف" });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.use("/api/ranks", rk);
 
@@ -1840,6 +1894,31 @@ app.post("/api/soldiers/bulk-upload", auth, commanderOnly, async (req, res) => {
     }
 
     res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- CLEAR ALL DATA (commander only) ----
+app.post("/api/admin/clear-all", auth, commanderOnly, async (req, res) => {
+  try {
+    await db.query("DELETE FROM result_item_scores WHERE result_id IN (SELECT id FROM results)").catch(() => {});
+    await db.query("DELETE FROM fitness_results");
+    await db.query("DELETE FROM distinction_confirmations").catch(() => {});
+    await db.query("DELETE FROM distinctions");
+    await db.query("DELETE FROM punishments");
+    await db.query("DELETE FROM results");
+    await db.query("DELETE FROM soldiers");
+    await db.query("DELETE FROM exam_items").catch(() => {});
+    await db.query("DELETE FROM exams");
+    await db.query("DELETE FROM announcements");
+    await db.query("DELETE FROM specialties");
+    await db.query("DELETE FROM weapons");
+    await db.query("DELETE FROM ranks");
+    await db.query("DELETE FROM rank_types");
+    await db.query("DELETE FROM fitness_exercises");
+    await db.query("DELETE FROM notifications");
+    res.json({ message: "✅ تم حذف جميع البيانات" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

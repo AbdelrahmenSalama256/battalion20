@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 
-
 const ALL_TABS = [
   { id: "sections", label: "الرئيسية", icon: "📊", path: "/" },
   { id: "soldiers", label: "الأفراد", icon: "👥", path: "/soldiers" },
@@ -118,7 +117,7 @@ export default function Layout({
             </button>
           ))}
         </nav>
-        {user?.role === 'commander' && (
+        {/* {user?.role === 'commander' && (
           <button onClick={async () => {
             try {
               const token = localStorage.getItem('b20_token');
@@ -136,7 +135,7 @@ export default function Layout({
             <span className="fs-6" style={{ width: 24, textAlign: "center" }}>📄</span>
             <span style={{ fontSize: 11 }}>تحميل دليل فك التشفير</span>
           </button>
-        )}
+        )} */}
         <button
           onClick={() => {
             onLogout();

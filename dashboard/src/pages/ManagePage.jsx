@@ -11,12 +11,34 @@ const TABS = [
 
 export default function ManagePage({ user }) {
   const [activeTab, setActiveTab] = useState('specialties');
+  const [clearConfirm, setClearConfirm] = useState(false);
 
   if (user?.role !== 'commander') return null;
 
+  async function handleClearAll() {
+    if (!clearConfirm) { setClearConfirm(true); return; }
+    if (!confirm('هل أنت متأكد من حذف جميع البيانات؟ لن تتمكن من التراجع!')) return;
+    try {
+      await api.clearAll();
+      setClearConfirm(false);
+      window.location.reload();
+    } catch (e) { alert('خطأ: ' + e.message); }
+  }
+
   return (
     <div>
-      <h4 className="text-gold mb-3">الإدارة</h4>
+      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h4 className="text-gold mb-0">الإدارة</h4>
+        <button onClick={handleClearAll}
+          className={`btn btn-sm ${clearConfirm ? 'btn-danger' : 'btn-outline-danger'}`}>
+          {clearConfirm ? '⚠️ تأكيد الحذف الكامل' : '🗑️ حذف كل البيانات'}
+        </button>
+      </div>
+      {clearConfirm && (
+        <p style={{ fontSize: 11, color: '#ff6b6b', marginBottom: 12 }}>
+          سيتم حذف جميع الأفراد والبيانات. اضغط مرة أخرى للتأكيد.
+        </p>
+      )}
 
       <ul className="nav nav-tabs mb-3">
         {TABS.map(t => (
@@ -41,13 +63,18 @@ export default function ManagePage({ user }) {
 /* ─── Specialties ─── */
 function SpecialtiesManager() {
   const [items, setItems] = useState([]);
+  const [weapons, setWeapons] = useState([]);
   const [showForm, setShowForm] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { load(); }, []);
   async function load() {
     setLoading(true);
-    try { setItems(await api.getSpecialties()); } catch (e) { console.error(e); }
+    try {
+      const [sp, wp] = await Promise.all([api.getSpecialties(), api.getWeapons()]);
+      setItems(sp);
+      setWeapons(wp);
+    } catch (e) { console.error(e); }
     setLoading(false);
   }
 
@@ -57,45 +84,42 @@ function SpecialtiesManager() {
     load();
   }
 
-  function render() {
-    if (loading) return <div className="text-center p-3 text-muted-military">جاري التحميل...</div>;
-    return (
-      <div>
-        <button onClick={() => setShowForm({})} className="btn btn-gold btn-sm mb-2">+ إضافة تخصص</button>
-        <div className="table-responsive">
-          <table className="table table-sm table-hover border-military">
-            <thead><tr className="text-gold small"><th>الاسم</th><th>الوصف</th><th>الحالة</th><th></th></tr></thead>
-            <tbody>
-              {items.map(i => (
-                <tr key={i.id}>
-                  <td className="small">{i.name}</td>
-                  <td className="small text-muted-military">{i.description || '-'}</td>
-                  <td><span className={`badge ${i.is_active ? 'bg-success' : 'bg-secondary'}`}>{i.is_active ? 'نشط' : 'غير نشط'}</span></td>
-                  <td className="d-flex gap-1">
-                    <button className="btn btn-sm btn-outline-gold py-0 px-1" onClick={() => setShowForm(i)}>✏️</button>
-                    <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => handleDelete(i.id)}>🗑️</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {showForm != null && (
-          <ItemForm item={showForm} fields={[
-            { key: 'name', label: 'الاسم', type: 'text' },
-            { key: 'description', label: 'الوصف', type: 'textarea' },
-            { key: 'isActive', label: 'نشط', type: 'checkbox' },
-          ]}
-            onSave={async (data) => {
-              if (showForm.id) await api.updateSpecialty(showForm.id, data);
-              else await api.createSpecialty(data);
-            }}
-            onClose={() => setShowForm(null)} onDone={load} />
-        )}
+  if (loading) return <div className="text-center p-3 text-muted-military">جاري التحميل...</div>;
+  return (
+    <div>
+      <button onClick={() => setShowForm({})} className="btn btn-gold btn-sm mb-2">+ إضافة تخصص</button>
+      <div className="table-responsive">
+        <table className="table table-sm table-hover border-military">
+          <thead><tr className="text-gold small"><th>الاسم</th><th>السلاح</th><th>العدد</th><th></th></tr></thead>
+          <tbody>
+            {items.map(i => (
+              <tr key={i.id}>
+                <td className="small">{i.name}</td>
+                <td className="small text-muted-military">{weapons.find(w => w.id === i.weapon_id)?.name || '-'}</td>
+                <td className="small text-muted-military">{i.soldier_count || 0}</td>
+                <td className="d-flex gap-1">
+                  <button className="btn btn-sm btn-outline-gold py-0 px-1" onClick={() => setShowForm(i)} title="تعديل">✏️</button>
+                  <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => handleDelete(i.id)} title="حذف">🗑️</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-    );
-  }
-  return render();
+      {showForm != null && (
+        <ItemForm item={showForm} fields={[
+          { key: 'name', label: 'الاسم', type: 'text' },
+          { key: 'weapon_id', label: 'السلاح', type: 'select', options: weapons.map(w => ({ value: w.id, label: w.name })) },
+          { key: 'description', label: 'الوصف', type: 'textarea' },
+        ]}
+          onSave={async (data) => {
+            if (showForm.id) await api.updateSpecialty(showForm.id, data);
+            else await api.createSpecialty(data);
+          }}
+          onClose={() => setShowForm(null)} onDone={load} />
+      )}
+    </div>
+  );
 }
 
 /* ─── Weapons ─── */
@@ -112,7 +136,7 @@ function WeaponsManager() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('حذف السلاح؟')) return;
+    if (!confirm('حذف السلاح؟ سيتم حذف التخصصات المرتبطة به.')) return;
     await api.deleteWeapon(id);
     load();
   }
@@ -123,14 +147,16 @@ function WeaponsManager() {
       <button onClick={() => setShowForm({})} className="btn btn-gold btn-sm mb-2">+ إضافة سلاح</button>
       <div className="table-responsive">
         <table className="table table-sm table-hover border-military">
-          <thead><tr className="text-gold small"><th>الأيقونة</th><th>الاسم</th><th>الوصف</th><th></th></tr></thead>
+          <thead><tr className="text-gold small"><th>الأيقونة</th><th>الاسم</th><th></th></tr></thead>
           <tbody>
             {items.map(i => (
               <tr key={i.id}>
                 <td className="small">{i.icon || '-'}</td>
                 <td className="small">{i.name}</td>
-                <td className="small text-muted-military">{i.description || '-'}</td>
-                <td><button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => handleDelete(i.id)}>🗑️</button></td>
+                <td className="d-flex gap-1">
+                  <button className="btn btn-sm btn-outline-gold py-0 px-1" onClick={() => setShowForm(i)} title="تعديل">✏️</button>
+                  <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => handleDelete(i.id)} title="حذف">🗑️</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -142,7 +168,10 @@ function WeaponsManager() {
           { key: 'icon', label: 'الأيقونة', type: 'text' },
           { key: 'description', label: 'الوصف', type: 'textarea' },
         ]}
-          onSave={async (data) => { await api.createWeapon(data); }}
+          onSave={async (data) => {
+            if (showForm.id) await api.updateWeapon(showForm.id, data);
+            else await api.createWeapon(data);
+          }}
           onClose={() => setShowForm(null)} onDone={load} />
       )}
     </div>
@@ -152,34 +181,62 @@ function WeaponsManager() {
 /* ─── Ranks ─── */
 function RanksManager() {
   const [items, setItems] = useState([]);
+  const [rankTypes, setRankTypes] = useState([]);
+  const [showForm, setShowForm] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { load(); }, []);
   async function load() {
     setLoading(true);
-    try { setItems(await api.getRanks()); } catch (e) { console.error(e); }
+    try {
+      const [ranks, types] = await Promise.all([api.getRanks(), api.getRankTypes()]);
+      setItems(ranks);
+      setRankTypes(types);
+    } catch (e) { console.error(e); }
     setLoading(false);
+  }
+
+  async function handleDelete(id) {
+    if (!confirm('حذف الرتبة؟')) return;
+    await api.deleteRank(id);
+    load();
   }
 
   if (loading) return <div className="text-center p-3 text-muted-military">جاري التحميل...</div>;
   return (
     <div>
-      <div className="small text-muted-military mb-2">الرتب المحددة في النظام (للقراءة فقط)</div>
+      <button onClick={() => setShowForm({})} className="btn btn-gold btn-sm mb-2">+ إضافة رتبة</button>
       <div className="table-responsive">
         <table className="table table-sm table-hover border-military">
-          <thead><tr className="text-gold small"><th>الاسم</th><th>المستوى</th><th>النوع</th><th>الترتيب</th></tr></thead>
+          <thead><tr className="text-gold small"><th>الاسم</th><th>النوع</th><th>الترتيب</th><th></th></tr></thead>
           <tbody>
             {items.map(i => (
               <tr key={i.id}>
                 <td className="small">{i.name}</td>
-                <td className="small">{i.level}</td>
-                <td className="small">{i.type_name || '-'}</td>
-                <td className="small">{i.sort_order}</td>
+                <td className="small" style={{ color: i.type_color || '#999' }}>{i.type_name || '-'}</td>
+                <td className="small text-muted-military">{i.sort_order}</td>
+                <td className="d-flex gap-1">
+                  <button className="btn btn-sm btn-outline-gold py-0 px-1" onClick={() => setShowForm(i)} title="تعديل">✏️</button>
+                  <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => handleDelete(i.id)} title="حذف">🗑️</button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {showForm != null && (
+        <ItemForm item={showForm} fields={[
+          { key: 'name', label: 'الاسم', type: 'text' },
+          { key: 'type_id', label: 'النوع', type: 'select', options: rankTypes.map(t => ({ value: t.id, label: t.name })) },
+          { key: 'sort_order', label: 'الترتيب', type: 'text' },
+        ]}
+          onSave={async (data) => {
+            data.sort_order = data.sort_order ? parseInt(data.sort_order) : 0;
+            if (showForm.id) await api.updateRank(showForm.id, data);
+            else await api.createRank(data);
+          }}
+          onClose={() => setShowForm(null)} onDone={load} />
+      )}
     </div>
   );
 }
@@ -187,6 +244,7 @@ function RanksManager() {
 /* ─── Rank Types ─── */
 function RankTypesManager() {
   const [items, setItems] = useState([]);
+  const [showForm, setShowForm] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { load(); }, []);
@@ -196,20 +254,44 @@ function RankTypesManager() {
     setLoading(false);
   }
 
+  async function handleDelete(id) {
+    if (!confirm('حذف نوع الرتبة؟')) return;
+    await api.deleteRankType(id);
+    load();
+  }
+
   if (loading) return <div className="text-center p-3 text-muted-military">جاري التحميل...</div>;
   return (
     <div>
-      <div className="small text-muted-military mb-2">أنواع الرتب (للقراءة فقط)</div>
+      <button onClick={() => setShowForm({})} className="btn btn-gold btn-sm mb-2">+ إضافة نوع رتبة</button>
       <div className="table-responsive">
         <table className="table table-sm table-hover border-military">
-          <thead><tr className="text-gold small"><th>الاسم</th></tr></thead>
+          <thead><tr className="text-gold small"><th>الاسم</th><th>اللون</th><th></th></tr></thead>
           <tbody>
             {items.map(i => (
-              <tr key={i.id}><td className="small">{i.name}</td></tr>
+              <tr key={i.id}>
+                <td className="small">{i.name}</td>
+                <td className="small"><span style={{ color: i.color }}>{i.color || '-'}</span></td>
+                <td className="d-flex gap-1">
+                  <button className="btn btn-sm btn-outline-gold py-0 px-1" onClick={() => setShowForm(i)} title="تعديل">✏️</button>
+                  <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => handleDelete(i.id)} title="حذف">🗑️</button>
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {showForm != null && (
+        <ItemForm item={showForm} fields={[
+          { key: 'name', label: 'الاسم', type: 'text' },
+          { key: 'color', label: 'اللون (hex)', type: 'text' },
+        ]}
+          onSave={async (data) => {
+            if (showForm.id) await api.updateRankType(showForm.id, data);
+            else await api.createRankType(data);
+          }}
+          onClose={() => setShowForm(null)} onDone={load} />
+      )}
     </div>
   );
 }
@@ -246,13 +328,22 @@ function ItemForm({ item, fields, onSave, onClose, onDone }) {
           ) : f.type === 'textarea' ? (
             <>
               <label className="form-label small text-muted-military">{f.label}</label>
-              <textarea value={form[f.key]} onChange={e => setForm(fa => ({ ...fa, [f.key]: e.target.value }))}
+              <textarea value={form[f.key] || ''} onChange={e => setForm(fa => ({ ...fa, [f.key]: e.target.value }))}
                 className="form-control bg-card text-light border-military" rows={3} />
+            </>
+          ) : f.type === 'select' ? (
+            <>
+              <label className="form-label small text-muted-military">{f.label}</label>
+              <select value={form[f.key] || ''} onChange={e => setForm(fa => ({ ...fa, [f.key]: e.target.value }))}
+                className="form-select bg-card text-light border-military">
+                <option value="">— اختر —</option>
+                {f.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </>
           ) : (
             <>
               <label className="form-label small text-muted-military">{f.label}</label>
-              <input type="text" value={form[f.key]} onChange={e => setForm(fa => ({ ...fa, [f.key]: e.target.value }))}
+              <input type="text" value={form[f.key] || ''} onChange={e => setForm(fa => ({ ...fa, [f.key]: e.target.value }))}
                 className="form-control bg-card text-light border-military" />
             </>
           )}
