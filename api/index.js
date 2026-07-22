@@ -187,6 +187,27 @@ app.get("/api", (req, res) =>
   res.json({ ok: true, name: "Battalion 20 API", version: "3.0.0" }),
 );
 
+// PUBLIC: one-time setup — creates tables + admin user
+let setupDone = false;
+app.post("/api/admin/setup", async (req, res) => {
+  try {
+    if (setupDone) return res.json({ message: "Setup already done" });
+    await runMigrations();
+    const { rows: existing } = await db.query("SELECT id FROM users WHERE username='commander'");
+    if (!existing.length) {
+      const hash = await bcrypt.hash("1234", 10);
+      await db.query(
+        "INSERT INTO users(name,username,password_hash,role,is_active) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+        ["القائد", "commander", hash, "commander", true]
+      );
+    }
+    setupDone = true;
+    res.json({ message: "✅ Setup complete — admin user: commander / 1234" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // AUTH
 const er = express.Router();
 er.post("/login", async (req, res) => {
