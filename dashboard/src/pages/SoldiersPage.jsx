@@ -4,6 +4,7 @@ import { api } from '../api';
 import Modal from '../components/Modal';
 import ScoreBadge from '../components/ScoreBadge';
 import ExcelUpload from '../components/ExcelUpload';
+import BulkDeleteBar from '../components/BulkDeleteBar';
 
 const STATUS_OPTIONS = [
   { value: 'active', label: 'نشط' },
@@ -28,8 +29,9 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
   const [specialtyFilter, setSpecialtyFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [editSoldier, setEditSoldier] = useState(null);
-  const [actionModal, setActionModal] = useState(null); // { soldier, type: 'distinction'|'punishment' }
+  const [actionModal, setActionModal] = useState(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const navigate = useNavigate();
 
   const filtered = soldiers.filter(s => {
@@ -46,6 +48,29 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
   function canGiveAction() {
     if (user?.role === 'commander') return true;
     return user?.permissions?.canDistinguish || user?.permissions?.canPunish;
+  }
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map(s => s.id)));
+    }
+  }
+
+  async function handleBulkDelete(ids) {
+    await api.bulkDeleteSoldiers(ids);
+    setSelectedIds(new Set());
+    onRefresh?.();
   }
 
   async function handleConfirmReturn(soldier) {
@@ -99,6 +124,10 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
         <table className="table table-sm table-hover border-military">
           <thead>
             <tr className="text-gold small">
+              {user?.role === 'commander' && <th style={{ width: 30 }}>
+                <input type="checkbox" checked={filtered.length > 0 && selectedIds.size === filtered.length}
+                  onChange={toggleSelectAll} style={{ accentColor: 'var(--military-gold-bright)' }} />
+              </th>}
               <th>الرتبة</th>
               <th>الاسم</th>
               <th>السلاح</th>
@@ -112,6 +141,10 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
           <tbody>
             {filtered.map(s => (
               <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/soldiers/${s.id}`)}>
+                {user?.role === 'commander' && <td onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)}
+                    style={{ accentColor: 'var(--military-gold-bright)' }} />
+                </td>}
                 <td>
                   <span className="badge bg-dark border border-military px-2 py-1" style={{ fontSize: '0.65rem' }}>
                     {s.rank_name || '-'}
@@ -144,7 +177,7 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={8} className="text-center text-muted-military small py-3">لا توجد نتائج</td></tr>
+              <tr><td colSpan={9} className="text-center text-muted-military small py-3">لا توجد نتائج</td></tr>
             )}
           </tbody>
         </table>
@@ -196,6 +229,8 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
           onDone={() => { setActionModal(null); onRefresh(); }}
         />
       )}
+
+      <BulkDeleteBar selectedIds={selectedIds} onDelete={handleBulkDelete} label="فرد" />
     </div>
   );
 }

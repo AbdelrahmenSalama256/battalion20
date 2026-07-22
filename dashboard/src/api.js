@@ -47,6 +47,7 @@ export const api = {
   createSoldier: (data) => req('POST', '/soldiers', data),
   updateSoldier: (id, data) => req('PUT', `/soldiers/${id}`, data),
   deleteSoldier: (id) => req('DELETE', `/soldiers/${id}`),
+  bulkDeleteSoldiers: (ids) => req('POST', '/soldiers/bulk-delete', { ids }),
   assignSpecialty: (soldierId, specialtyId) => req('POST', `/soldiers/${soldierId}/specialties`, { specialtyId }),
   removeSpecialty: (soldierId, specialtyId) => req('DELETE', `/soldiers/${soldierId}/specialties/${specialtyId}`),
 
@@ -66,6 +67,7 @@ export const api = {
     return req('GET', `/evaluations/soldier/${soldierId}?${q.toString()}`);
   },
   createEvaluation: (data) => req('POST', '/evaluations', data),
+  bulkDeleteEvaluations: (ids) => req('POST', '/evaluations/bulk-delete', { ids }),
   getSectionStats: (sectionKey, specialtyId) => {
     const q = new URLSearchParams();
     if (specialtyId) q.set('specialtyId', specialtyId);
@@ -89,6 +91,7 @@ export const api = {
   updateUserPassword: (id, password) => req('PATCH', `/users/${id}/password`, { password }),
   toggleUser: (id) => req('PATCH', `/users/${id}/toggle`),
   deleteUser: (id) => req('DELETE', `/users/${id}`),
+  bulkDeleteUsers: (ids) => req('POST', '/users/bulk-delete', { ids }),
 
   // Notifications
   getNotifications: () => req('GET', '/notifications'),
@@ -117,6 +120,7 @@ export const api = {
   createExam: (data) => req('POST', '/exams', data),
   updateExam: (id, data) => req('PUT', `/exams/${id}`, data),
   deleteExam: (id) => req('DELETE', `/exams/${id}`),
+  bulkDeleteExams: (ids) => req('POST', '/exams/bulk-delete', { ids }),
 
   // Announcements
   getAnnouncements: () => req('GET', '/announcements'),
@@ -124,6 +128,7 @@ export const api = {
   createAnnouncement: (data) => req('POST', '/announcements', data),
   updateAnnouncement: (id, data) => req('PUT', `/announcements/${id}`, data),
   deleteAnnouncement: (id) => req('DELETE', `/announcements/${id}`),
+  bulkDeleteAnnouncements: (ids) => req('POST', '/announcements/bulk-delete', { ids }),
 
   // Distinction confirmations
   confirmDistinction: (id) => req('POST', `/distinctions/${id}/confirm`),

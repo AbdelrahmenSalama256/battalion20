@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import Modal from '../components/Modal';
+import BulkDeleteBar from '../components/BulkDeleteBar';
 
 export default function AnnouncementsPage({ user }) {
   const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   useEffect(() => { load(); }, []);
 
@@ -19,6 +21,26 @@ export default function AnnouncementsPage({ user }) {
   }
 
   const canManage = user?.role === 'commander';
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === announcements.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(announcements.map(a => a.id)));
+  }
+
+  async function handleBulkDelete(ids) {
+    await api.bulkDeleteAnnouncements(ids);
+    setSelectedIds(new Set());
+    load();
+  }
 
   const priorityStyles = {
     urgent: { bg: 'bg-danger', label: 'عاجل' },
@@ -35,6 +57,16 @@ export default function AnnouncementsPage({ user }) {
         )}
       </div>
 
+      {canManage && announcements.length > 0 && (
+        <div className="mb-3">
+          <label className="d-flex align-items-center gap-1 small text-muted-military" style={{ cursor: 'pointer' }}>
+            <input type="checkbox" checked={selectedIds.size === announcements.length && announcements.length > 0}
+              onChange={toggleSelectAll} style={{ accentColor: 'var(--military-gold-bright)' }} />
+            تحديد الكل
+          </label>
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center p-4 text-muted-military">جاري التحميل...</div>
       ) : announcements.length === 0 ? (
@@ -45,9 +77,14 @@ export default function AnnouncementsPage({ user }) {
             const ps = priorityStyles[a.priority] || priorityStyles.normal;
             return (
               <div key={a.id} className="col-12">
-                <div className="card border-military p-3">
+                <div className={`card border-military p-3 ${selectedIds.has(a.id) ? 'border-gold' : ''}`}>
                   <div className="d-flex justify-content-between align-items-start">
-                    <div className="flex-grow-1">
+                    <div className="d-flex gap-2 flex-grow-1">
+                      {canManage && (
+                        <input type="checkbox" checked={selectedIds.has(a.id)} onChange={() => toggleSelect(a.id)}
+                          style={{ accentColor: 'var(--military-gold-bright)', marginTop: 4, flexShrink: 0 }} />
+                      )}
+                      <div className="flex-grow-1">
                       <div className="d-flex align-items-center gap-2 mb-1">
                         <h6 className="text-gold mb-0">{a.title}</h6>
                         <span className={`badge ${ps.bg}`} style={{ fontSize: '0.6rem' }}>{ps.label}</span>
@@ -68,6 +105,7 @@ export default function AnnouncementsPage({ user }) {
                   </div>
                 </div>
               </div>
+            </div>
             );
           })}
         </div>
@@ -77,6 +115,8 @@ export default function AnnouncementsPage({ user }) {
         <AnnouncementForm announcement={showForm}
           onClose={() => setShowForm(null)} onSaved={load} />
       )}
+
+      <BulkDeleteBar selectedIds={selectedIds} onDelete={handleBulkDelete} label="إعلان" />
     </div>
   );
 }

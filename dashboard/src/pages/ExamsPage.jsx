@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import Modal from '../components/Modal';
+import BulkDeleteBar from '../components/BulkDeleteBar';
 
 const SECTION_NAMES = { general: 'عام', fitness: 'لياقة', shooting: 'رماية', discipline: 'انضباط', specialties: 'تخصص' };
 
@@ -9,6 +10,7 @@ export default function ExamsPage({ user, specialties }) {
   const [loading, setLoading] = useState(true);
   const [filterSection, setFilterSection] = useState('');
   const [showForm, setShowForm] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   useEffect(() => { loadExams(); }, []);
 
@@ -24,6 +26,26 @@ export default function ExamsPage({ user, specialties }) {
   useEffect(() => { loadExams(); }, [filterSection]);
 
   const canManage = user?.role === 'commander';
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === exams.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(exams.map(e => e.id)));
+  }
+
+  async function handleBulkDelete(ids) {
+    await api.bulkDeleteExams(ids);
+    setSelectedIds(new Set());
+    loadExams();
+  }
 
   return (
     <div>
@@ -42,6 +64,15 @@ export default function ExamsPage({ user, specialties }) {
             <option key={k} value={k}>{v}</option>
           ))}
         </select>
+        {canManage && exams.length > 0 && (
+          <div className="d-flex align-items-center gap-2">
+            <label className="d-flex align-items-center gap-1 small text-muted-military" style={{ cursor: 'pointer' }}>
+              <input type="checkbox" checked={selectedIds.size === exams.length && exams.length > 0}
+                onChange={toggleSelectAll} style={{ accentColor: 'var(--military-gold-bright)' }} />
+              تحديد الكل
+            </label>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -52,9 +83,14 @@ export default function ExamsPage({ user, specialties }) {
         <div className="row g-2">
           {exams.map(ex => (
             <div key={ex.id} className="col-12 col-md-6">
-              <div className="card border-military p-3">
+              <div className={`card border-military p-3 ${selectedIds.has(ex.id) ? 'border-gold' : ''}`}>
                 <div className="d-flex justify-content-between align-items-start">
-                  <div>
+                  <div className="d-flex gap-2">
+                    {canManage && (
+                      <input type="checkbox" checked={selectedIds.has(ex.id)} onChange={() => toggleSelect(ex.id)}
+                        style={{ accentColor: 'var(--military-gold-bright)', marginTop: 4 }} />
+                    )}
+                    <div>
                     <h6 className="text-gold mb-1">{ex.title}</h6>
                     <div className="small text-muted-military mb-1">
                       <span className="badge bg-dark border border-military me-1">
@@ -82,14 +118,15 @@ export default function ExamsPage({ user, specialties }) {
                       بواسطة: {ex.created_by_name || '-'} | {new Date(ex.created_at).toLocaleDateString('ar-EG')}
                     </div>
                   </div>
-                  {canManage && (
-                    <div className="d-flex gap-1">
-                      <button className="btn btn-sm btn-outline-gold py-0 px-1"
-                        onClick={() => setShowForm(ex)} title="تعديل">✏️</button>
-                      <button className="btn btn-sm btn-outline-danger py-0 px-1"
-                        onClick={async () => { if (confirm('حذف الامتحان?')) { await api.deleteExam(ex.id); loadExams(); } }} title="حذف">🗑️</button>
-                    </div>
-                  )}
+                    {canManage && (
+                      <div className="d-flex gap-1">
+                        <button className="btn btn-sm btn-outline-gold py-0 px-1"
+                          onClick={() => setShowForm(ex)} title="تعديل">✏️</button>
+                        <button className="btn btn-sm btn-outline-danger py-0 px-1"
+                          onClick={async () => { if (confirm('حذف الامتحان?')) { await api.deleteExam(ex.id); loadExams(); } }} title="حذف">🗑️</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -101,6 +138,8 @@ export default function ExamsPage({ user, specialties }) {
         <ExamForm exam={showForm} specialties={specialties}
           onClose={() => setShowForm(null)} onSaved={loadExams} />
       )}
+
+      <BulkDeleteBar selectedIds={selectedIds} onDelete={handleBulkDelete} label="امتحان" />
     </div>
   );
 }

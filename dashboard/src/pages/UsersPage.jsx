@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import Modal from '../components/Modal';
+import BulkDeleteBar from '../components/BulkDeleteBar';
 
 const ROLE_LABELS = { commander: 'قائد', officer: 'ضابط', nco: 'صف ضابط' };
 
@@ -23,6 +24,27 @@ const PAGE_LABELS = {
 export default function UsersPage({ users, ranks, onRefresh, user }) {
   const [showForm, setShowForm] = useState(false);
   const [editUser, setEditUser] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === users.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(users.map(u => u.id)));
+  }
+
+  async function handleBulkDelete(ids) {
+    await api.bulkDeleteUsers(ids);
+    setSelectedIds(new Set());
+    onRefresh?.();
+  }
 
   return (
     <div>
@@ -35,6 +57,10 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
         <table className="table table-sm table-hover border-military">
           <thead>
             <tr className="text-gold small">
+              {user?.role === 'commander' && <th style={{ width: 30 }}>
+                <input type="checkbox" checked={users.length > 0 && selectedIds.size === users.length}
+                  onChange={toggleSelectAll} style={{ accentColor: 'var(--military-gold-bright)' }} />
+              </th>}
               <th>#</th>
               <th>الاسم</th>
               <th>اسم المستخدم</th>
@@ -47,6 +73,10 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
           <tbody>
             {users.map((u, i) => (
               <tr key={u.id} className={u.is_active ? '' : 'opacity-50'}>
+                {user?.role === 'commander' && <td onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" checked={selectedIds.has(u.id)} onChange={() => toggleSelect(u.id)}
+                    style={{ accentColor: 'var(--military-gold-bright)' }} />
+                </td>}
                 <td className="small">{i + 1}</td>
                 <td className="small">{u.name}</td>
                 <td className="small">{u.username}</td>
@@ -68,7 +98,7 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
               </tr>
             ))}
             {users.length === 0 && (
-              <tr><td colSpan={7} className="text-center text-muted-military small py-3">لا توجد نتائج</td></tr>
+              <tr><td colSpan={8} className="text-center text-muted-military small py-3">لا توجد نتائج</td></tr>
             )}
           </tbody>
         </table>
@@ -76,6 +106,7 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
 
       {showForm && <UserForm ranks={ranks} onClose={() => { setShowForm(false); onRefresh(); }} />}
       {editUser && <UserForm user={editUser} ranks={ranks} onClose={() => { setEditUser(null); onRefresh(); }} />}
+      <BulkDeleteBar selectedIds={selectedIds} onDelete={handleBulkDelete} label="مستخدم" />
     </div>
   );
 }

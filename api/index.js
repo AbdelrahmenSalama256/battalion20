@@ -508,6 +508,14 @@ sl.delete("/:id", auth, commanderOnly, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+sl.post("/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    const { rowCount } = await db.query("DELETE FROM soldiers WHERE id = ANY($1)", [ids]);
+    res.json({ deleted: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 sl.post("/:id/distinguish", auth, async (req, res) => {
   try {
     const { badge, citation } = req.body;
@@ -647,6 +655,14 @@ ev.post("/", auth, async (req, res) => {
     res.status(201).json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+ev.post("/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    const { rowCount } = await db.query("DELETE FROM evaluations WHERE id = ANY($1)", [ids]);
+    res.json({ deleted: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.use("/api/evaluations", ev);
 
 // DISTINCTIONS
@@ -690,6 +706,15 @@ di.delete("/:id", auth, async (req, res) => {
     res.json({ message: "تم الحذف" });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+di.post("/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids?.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    await pool.query("DELETE FROM distinction_confirmations WHERE distinction_id = ANY($1)", [ids]);
+    const { rowCount } = await pool.query("DELETE FROM distinctions WHERE id = ANY($1)", [ids]);
+    res.json({ deleted: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.use("/api/distinctions", di);
 
 // PUNISHMENTS
@@ -713,6 +738,14 @@ pu.delete("/:id", auth, async (req, res) => {
     const { rowCount } = await pool.query("DELETE FROM punishments WHERE id=$1", [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: "غير موجود" });
     res.json({ message: "تم الحذف" });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+pu.post("/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids?.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    const { rowCount } = await pool.query("DELETE FROM punishments WHERE id = ANY($1)", [ids]);
+    res.json({ deleted: rowCount });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.use("/api/punishments", pu);
@@ -964,6 +997,15 @@ ex.delete("/:id", auth, commanderOnly, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+ex.post("/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids?.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    await db.query("DELETE FROM exam_items WHERE exam_id = ANY($1)", [ids]);
+    const { rowCount } = await db.query("DELETE FROM exams WHERE id = ANY($1)", [ids]);
+    res.json({ deleted: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.use("/api/exams", ex);
 
@@ -1357,6 +1399,14 @@ an.delete("/:id", auth, commanderOnly, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+an.post("/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids?.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    const { rowCount } = await db.query("DELETE FROM announcements WHERE id = ANY($1)", [ids]);
+    res.json({ deleted: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.use("/api/announcements", an);
 
 // PUSH HELPERS
@@ -1628,6 +1678,14 @@ us.delete("/:id", auth, commanderOnly, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+us.post("/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids?.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    const { rowCount } = await db.query("DELETE FROM users WHERE id = ANY($1) AND role != 'commander'", [ids]);
+    res.json({ deleted: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.use("/api/users", us);
 
