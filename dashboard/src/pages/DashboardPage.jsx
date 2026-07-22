@@ -217,12 +217,16 @@ export default function DashboardPage({
 }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
+  const [leaveData, setLeaveData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api
       .getResultsStats()
       .then(setStats)
+      .catch(() => {});
+    api.getPersonnelDashboard()
+      .then(setLeaveData)
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -354,6 +358,98 @@ export default function DashboardPage({
           />
         ))}
       </div>
+
+      {/* Leave Tracking — Commander only */}
+      {user?.role === 'commander' && leaveData && (
+        <div className="mb-4">
+          {/* Today's Return Alerts */}
+          {leaveData.returningToday?.length > 0 && (
+            <div className="card border-danger p-3 mb-3" style={{ background: 'rgba(220,53,69,0.1)', borderRadius: 16 }}>
+              <h6 className="text-danger mb-2" style={{ fontSize: 14 }}>
+                🚨 عودة اليوم ({leaveData.returningTodayCount})
+              </h6>
+              <div className="small text-muted-military mb-2">هؤلاء الأفراد تاريخ عودتهم اليوم — تأكد من وصولهم:</div>
+              <div className="d-flex flex-wrap gap-2">
+                {leaveData.returningToday.map(s => (
+                  <div key={s.id} className="card border-military p-2" style={{ background: 'rgba(220,53,69,0.05)', minWidth: 180 }}>
+                    <div className="d-flex justify-content-between align-items-start">
+                      <div>
+                        <div className="small fw-bold">{s.name}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{s.rank_name} | {s.military_id}</div>
+                        <div style={{ fontSize: 10, color: '#dc3545' }}>تاريخ العودة: {new Date(s.end_date).toLocaleDateString('ar-EG')}</div>
+                      </div>
+                      <button className="btn btn-sm btn-outline-success py-0" style={{ fontSize: '0.6rem' }}
+                        onClick={() => navigate(`/soldiers/${s.id}`)}>✓ وصل</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Overdue Returns */}
+          {leaveData.overdueReturn?.length > 0 && (
+            <div className="card border-warning p-3 mb-3" style={{ background: 'rgba(255,193,7,0.1)', borderRadius: 16 }}>
+              <h6 className="text-warning mb-2" style={{ fontSize: 14 }}>
+                ⏰ متأخرون عن العودة ({leaveData.overdueReturn.length})
+              </h6>
+              <div className="d-flex flex-wrap gap-2">
+                {leaveData.overdueReturn.map(l => (
+                  <div key={l.id} className="card border-military p-2" style={{ background: 'rgba(255,193,7,0.05)', minWidth: 180 }}>
+                    <div className="small fw-bold">{l.soldier_name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{l.rank_name} | {l.military_id}</div>
+                    <div style={{ fontSize: 10, color: '#ffc107' }}>متأخر {l.overdue_days} يوم</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Soldiers Approaching Leave (19-21 days) */}
+          {leaveData.needWarning?.filter(s => s.leave_status === 'warning' || s.leave_status === 'overdue').length > 0 && (
+            <div className="card border-military p-3 mb-3" style={{ background: 'rgba(212,168,67,0.08)', borderRadius: 16 }}>
+              <h6 className="text-gold mb-2" style={{ fontSize: 14 }}>
+                ⚠️ يقتربون من موعد الإجازة ({leaveData.needWarning.filter(s => s.leave_status === 'warning' || s.leave_status === 'overdue').length})
+              </h6>
+              <div className="row g-2">
+                {leaveData.needWarning
+                  .filter(s => s.leave_status === 'warning' || s.leave_status === 'overdue')
+                  .slice(0, 10)
+                  .map(s => (
+                  <div key={s.id} className="col-6 col-md-4 col-lg-3">
+                    <div className="card border-military p-2" style={{ background: s.leave_status === 'overdue' ? 'rgba(220,53,69,0.05)' : 'rgba(255,193,7,0.05)' }}>
+                      <div className="small fw-bold">{s.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{s.rank_name}</div>
+                      <div style={{ fontSize: 10, color: s.leave_status === 'overdue' ? '#dc3545' : '#ffc107' }}>
+                        {s.days_since} يوم بدون إجازة
+                        {s.leave_status === 'overdue' ? ' ⚠️' : ''}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Upcoming Returns */}
+          {leaveData.upcomingReturns?.length > 0 && (
+            <div className="card border-military p-3 mb-3" style={{ background: 'rgba(78,205,196,0.08)', borderRadius: 16 }}>
+              <h6 className="mb-2" style={{ fontSize: 14, color: '#4ecdc4' }}>
+                📅 عودات قادمة ({leaveData.upcomingReturns.length})
+              </h6>
+              <div className="d-flex flex-wrap gap-2">
+                {leaveData.upcomingReturns.map(l => (
+                  <div key={l.id} className="card border-military p-2" style={{ background: 'rgba(78,205,196,0.05)', minWidth: 180 }}>
+                    <div className="small fw-bold">{l.soldier_name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{l.rank_name} | {l.military_id}</div>
+                    <div style={{ fontSize: 10, color: '#4ecdc4' }}>يعود بعد {l.days_remaining} يوم</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Main Chart - Line chart with all categories */}
       <div

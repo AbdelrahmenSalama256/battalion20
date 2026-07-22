@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
+import { smartMatch } from '../utils/translit';
 import Modal from '../components/Modal';
 import ScoreBadge from '../components/ScoreBadge';
 import ExcelUpload from '../components/ExcelUpload';
@@ -35,13 +36,9 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
   const navigate = useNavigate();
 
   const filtered = soldiers.filter(s => {
-    if (search && !s.name.includes(search) && !s.military_id?.includes(search)) return false;
+    if (search && !smartMatch(search, s.name) && !smartMatch(search, s.military_id || '')) return false;
     if (weaponFilter && s.weapon_id !== weaponFilter) return false;
     if (statusFilter && s.status !== statusFilter) return false;
-    if (specialtyFilter) {
-      // Check if soldier has this specialty (would need specialty data from soldier)
-      // For now, skip this filter
-    }
     return true;
   });
 

@@ -1468,17 +1468,46 @@ lv.get("/", auth, async (req, res) => {
 lv.get("/dashboard", auth, async (req, res) => {
   try {
     const total = await pool.query("SELECT COUNT(*) FROM soldiers");
-    const onLeave = await pool.query("SELECT COUNT(*) FROM soldiers WHERE status='إجازة'");
-    const needingLeave = await pool.query("SELECT COUNT(*) FROM soldiers s WHERE (s.status IS DISTINCT FROM 'إجازة') AND CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date)>21");
-    const returningToday = await pool.query("SELECT COUNT(*) FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' AND l.end_date=CURRENT_DATE AND l.return_confirmed=FALSE");
+    const onLeave = await pool.query("SELECT COUNT(*) FROM soldiers WHERE status='leave'");
+    const returningToday = await pool.query(
+      `SELECT s.id,s.name,s.military_id,r.name as rank_name,l.end_date,l.id as leave_id
+       FROM leaves l JOIN soldiers s ON l.soldier_id=s.id LEFT JOIN ranks r ON s.rank_id=r.id
+       WHERE l.status='active' AND l.end_date<=CURRENT_DATE AND l.return_confirmed=FALSE ORDER BY l.end_date ASC`
+    );
     const statusDist = await pool.query("SELECT status,COUNT(*)::int as count FROM soldiers GROUP BY status");
     const monthlyStats = await pool.query("SELECT TO_CHAR(start_date,'YYYY-MM') as month,COUNT(*) as leaves_count FROM leaves WHERE start_date>=CURRENT_DATE-INTERVAL'12 months' GROUP BY TO_CHAR(start_date,'YYYY-MM') ORDER BY month");
-    const upcomingReturns = await pool.query("SELECT l.*,s.name soldier_name,s.military_id,(l.end_date-CURRENT_DATE) as days_remaining FROM leaves l JOIN soldiers s ON l.soldier_id=s.id WHERE l.status='active' AND l.return_confirmed=FALSE AND l.end_date BETWEEN CURRENT_DATE AND CURRENT_DATE+7 ORDER BY l.end_date ASC");
+    const upcomingReturns = await pool.query(
+      `SELECT l.*,s.name soldier_name,s.military_id,r.name as rank_name,(l.end_date-CURRENT_DATE) as days_remaining
+       FROM leaves l JOIN soldiers s ON l.soldier_id=s.id LEFT JOIN ranks r ON s.rank_id=r.id
+       WHERE l.status='active' AND l.return_confirmed=FALSE AND l.end_date>CURRENT_DATE ORDER BY l.end_date ASC`
+    );
+    const needWarning = await pool.query(
+      `SELECT * FROM (
+        SELECT s.id,s.name,s.military_id,r.name as rank_name,
+          COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date) as last_leave,
+          (CURRENT_DATE - COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date))::int as days_since,
+          CASE
+            WHEN (CURRENT_DATE - COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date))::int > 28 THEN 'danger'
+            WHEN (CURRENT_DATE - COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date))::int >= 21 THEN 'overdue'
+            ELSE 'warning'
+          END as leave_status
+         FROM soldiers s LEFT JOIN ranks r ON s.rank_id=r.id
+         WHERE s.status NOT IN ('leave','mission')
+      ) sub WHERE days_since>=19
+      ORDER BY days_since DESC`
+    ).catch(() => ({ rows: [] }));
+    const overdueReturn = await pool.query(
+      `SELECT l.*,s.name soldier_name,s.military_id,r.name as rank_name,
+        (CURRENT_DATE - l.end_date) as overdue_days
+       FROM leaves l JOIN soldiers s ON l.soldier_id=s.id LEFT JOIN ranks r ON s.rank_id=r.id
+       WHERE l.status='active' AND l.end_date<CURRENT_DATE AND l.return_confirmed=FALSE
+       ORDER BY l.end_date ASC`
+    );
     res.json({
       total: parseInt(total.rows[0].count), onLeave: parseInt(onLeave.rows[0].count),
-      needingLeave: parseInt(needingLeave.rows[0].count), returningToday: parseInt(returningToday.rows[0].count),
+      returningToday: returningToday.rows, returningTodayCount: returningToday.rows.length,
       statusDistribution: statusDist.rows, monthlyStats: monthlyStats.rows, upcomingReturns: upcomingReturns.rows,
-      activeLeaves: 0, overdueReturn: 0,
+      needWarning: needWarning.rows, overdueReturn: overdueReturn.rows,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1496,7 +1525,21 @@ lv.get("/overdue-return", auth, async (req, res) => {
 });
 lv.get("/needing-leave", auth, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT * FROM (SELECT s.id,s.name,s.military_id,s.status as soldier_status,r.name as rank_name,COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as last_leave,CURRENT_DATE-COALESCE((SELECT MAX(l.end_date) FROM leaves l WHERE l.soldier_id=s.id AND l.status='active'),s.last_leave_end,s.enlistment_date,s.created_at::date) as days_since_leave FROM soldiers s LEFT JOIN ranks r ON s.rank_id=r.id WHERE (s.status IS DISTINCT FROM 'إجازة')) sub WHERE days_since_leave>21 ORDER BY days_since_leave DESC");
+    const { rows } = await pool.query(
+      `SELECT s.id,s.name,s.military_id,s.status as soldier_status,r.name as rank_name,
+        w.name as weapon_name,w.icon as weapon_icon,
+        COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date) as last_leave,
+        (CURRENT_DATE - COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date)) as days_since_leave,
+        CASE
+          WHEN (CURRENT_DATE - COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date))>28 THEN 'danger'
+          WHEN (CURRENT_DATE - COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date))>=21 THEN 'overdue'
+          WHEN (CURRENT_DATE - COALESCE(s.last_leave_end,s.enlistment_date,s.created_at::date))>=19 THEN 'warning'
+          ELSE 'ok'
+        END as leave_status
+       FROM soldiers s LEFT JOIN ranks r ON s.rank_id=r.id LEFT JOIN weapons w ON s.weapon_id=w.id
+       WHERE s.status NOT IN ('leave','mission')
+       ORDER BY days_since_leave DESC`
+    );
     res.json({ soldiers: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1505,7 +1548,7 @@ lv.post("/", auth, async (req, res) => {
     const { soldier_id, start_date, end_date, notes } = req.body;
     if (!soldier_id || !start_date || !end_date) return res.status(400).json({ error: "missing fields" });
     const { rows } = await pool.query("INSERT INTO leaves(soldier_id,start_date,end_date,notes,confirmed_by)VALUES($1,$2,$3,$4,$5)RETURNING *", [soldier_id, start_date, end_date, notes||null, req.user.id]);
-    await pool.query("UPDATE soldiers SET status='إجازة',last_leave_end=$1 WHERE id=$2", [end_date, soldier_id]);
+    await pool.query("UPDATE soldiers SET status='leave',last_leave_end=$1 WHERE id=$2", [end_date, soldier_id]);
     res.status(201).json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1514,7 +1557,8 @@ lv.patch("/:id/confirm-return", auth, async (req, res) => {
     const leave = await pool.query("SELECT * FROM leaves WHERE id=$1", [req.params.id]);
     if (!leave.rows.length) return res.status(404).json({ error: "غير موجود" });
     const { rows } = await pool.query("UPDATE leaves SET return_confirmed=TRUE,return_confirmed_by=$1,return_confirmed_at=NOW(),status='completed' WHERE id=$2 RETURNING *", [req.user.id, req.params.id]);
-    await pool.query("UPDATE soldiers SET status='نشط' WHERE id=$1", [leave.rows[0].soldier_id]);
+    const today = new Date().toISOString().slice(0, 10);
+    await pool.query("UPDATE soldiers SET status='active', last_leave_end=$1 WHERE id=$2", [today, leave.rows[0].soldier_id]);
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1523,7 +1567,7 @@ lv.patch("/:id/cancel", auth, async (req, res) => {
     const leave = await pool.query("SELECT * FROM leaves WHERE id=$1", [req.params.id]);
     if (!leave.rows.length) return res.status(404).json({ error: "غير موجود" });
     const { rows } = await pool.query("UPDATE leaves SET status='cancelled' WHERE id=$1 RETURNING *", [req.params.id]);
-    await pool.query("UPDATE soldiers SET status='نشط' WHERE id=$1 AND status='إجازة'", [leave.rows[0].soldier_id]);
+    await pool.query("UPDATE soldiers SET status='active' WHERE id=$1 AND status='leave'", [leave.rows[0].soldier_id]);
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2070,13 +2114,16 @@ app.post("/api/admin/full-upload", auth, commanderOnly, async (req, res) => {
         const rankId = rankMap[row.الرتبة] || null;
         const weaponId = weaponMap[row.السلاح] || null;
         const specialtyId = specialtyMap[row.التخصص] || null;
-        const status = (row.الحالة || 'active').toLowerCase();
+        const statusRaw = (row.الحالة || 'active').toLowerCase().trim();
+        const statusMap = { 'نشط': 'active', 'active': 'active', 'إجازة': 'leave', 'leave': 'leave', 'مأمورية': 'mission', 'mission': 'mission', 'أخرى': 'other', 'other': 'other' };
+        const status = statusMap[statusRaw] || 'active';
         const notes = row.ملاحظات || null;
         const enlistDate = row["تاريخ الالتحاق"] || null;
+        const lastLeaveEnd = row["تاريخ العودة الاخير"] || row["تاريخ العودة الأخير"] || null;
 
         const r = await db.query(
-          "INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id,status,notes,enlistment_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,military_id",
-          [name, militaryId, rankId, weaponId, specialtyId, status, notes, enlistDate]
+          "INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id,status,notes,enlistment_date,last_leave_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,military_id",
+          [name, militaryId, rankId, weaponId, specialtyId, status, notes, enlistDate, lastLeaveEnd]
         );
         milIdMap[militaryId] = r.rows[0].id;
         log.soldiers++;
