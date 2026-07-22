@@ -175,6 +175,14 @@ app.use((req, res, next) => {
 app.get("/api/health", (req, res) =>
   res.json({ ok: true, time: new Date().toISOString() }),
 );
+app.get("/api/health/db", async (req, res) => {
+  try {
+    const r = await db.query("SELECT 1 as ok");
+    res.json({ db: "connected", ok: r.rows[0].ok });
+  } catch (e) {
+    res.status(503).json({ db: "error", message: e.message });
+  }
+});
 app.get("/api", (req, res) =>
   res.json({ ok: true, name: "Battalion 20 API", version: "3.0.0" }),
 );
