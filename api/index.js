@@ -13,9 +13,10 @@ const isLocal = DB_URL && DB_URL.includes("localhost");
 const pool = new Pool({
   connectionString: DB_URL,
   ssl: isLocal ? false : { rejectUnauthorized: false },
-  max: 5,
-  connectionTimeoutMillis: 3000,
-  query_timeout: 5000,
+  max: 2,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
+  query_timeout: 10000,
 });
 pool.on("error", (err) => {
   console.error("POOL ERROR:", err?.message || err);
