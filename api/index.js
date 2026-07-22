@@ -98,6 +98,10 @@ async function runMigrations() {
   await pool.query("CREATE TABLE IF NOT EXISTS distinction_confirmations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), distinction_id UUID NOT NULL, user_id UUID REFERENCES users(id), confirmed_at TIMESTAMPTZ DEFAULT NOW())");
   try { await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_distinction_confirmations_unique ON distinction_confirmations(distinction_id, user_id)"); } catch (e) {}
   await pool.query("CREATE TABLE IF NOT EXISTS announcements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, content TEXT, priority VARCHAR(20) DEFAULT 'info', created_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())");
+  await pool.query("CREATE TABLE IF NOT EXISTS exam_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), exam_id UUID REFERENCES exams(id) ON DELETE CASCADE, text TEXT NOT NULL, max_score NUMERIC(5,2) DEFAULT 10, sort_order INT DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW())");
+  try { await pool.query("CREATE INDEX IF NOT EXISTS idx_exam_items_exam_id ON exam_items(exam_id)"); } catch (e) {}
+  await pool.query("CREATE TABLE IF NOT EXISTS result_item_scores (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), result_id UUID REFERENCES results(id) ON DELETE CASCADE, item_id UUID REFERENCES exam_items(id) ON DELETE SET NULL, score NUMERIC(5,2), max_score NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
+  await pool.query("CREATE TABLE IF NOT EXISTS fitness_results (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, exercise_id UUID, score_value NUMERIC(5,2), score_percent NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
   console.log("Migrations done");
 }
 
@@ -2072,11 +2076,6 @@ if (typeof process.env.VERCEL === "undefined") {
     console.log(`API running on http://localhost:${port}`);
     try {
       await runMigrations();
-  await pool.query("CREATE TABLE IF NOT EXISTS exam_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), exam_id UUID REFERENCES exams(id) ON DELETE CASCADE, text TEXT NOT NULL, max_score NUMERIC(5,2) DEFAULT 10, sort_order INT DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW())");
-  try { await pool.query("CREATE INDEX IF NOT EXISTS idx_exam_items_exam_id ON exam_items(exam_id)"); } catch (e) {}
-  await pool.query("CREATE TABLE IF NOT EXISTS result_item_scores (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), result_id UUID REFERENCES results(id) ON DELETE CASCADE, item_id UUID REFERENCES exam_items(id) ON DELETE SET NULL, score NUMERIC(5,2), max_score NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
-  await pool.query("CREATE TABLE IF NOT EXISTS fitness_results (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, exercise_id UUID, score_value NUMERIC(5,2), score_percent NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
-  console.log("Migrations done");
     } catch (e) {
       console.error("Migration error:", e.message);
     }
