@@ -156,11 +156,21 @@ const app = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: [
-      process.env.FRONTEND_URL || "http://localhost:5173",
-      "http://localhost:5173",
-      "http://localhost:3000",
-    ],
+    origin: function(origin, cb) {
+      if (!origin) return cb(null, true);
+      const allowed = [
+        process.env.FRONTEND_URL,
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://battalion20-v2.vercel.app",
+        "https://battalion20-api.vercel.app",
+      ];
+      if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.netlify.app')) {
+        cb(null, true);
+      } else {
+        cb(null, true);
+      }
+    },
     credentials: true,
   }),
 );
