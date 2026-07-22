@@ -390,7 +390,7 @@ sl.get("/", auth, async (req, res) => {
   try {
     const { search, weaponId, specialtyId } = req.query;
     let sql =
-      "SELECT s.*,r.name rank_name,r.sort_order rank_order,rt.name rank_type,rt.color rank_color,w.name weapon_name,w.icon weapon_icon,sp.name specialty_name FROM soldiers s LEFT JOIN ranks r ON r.id=s.rank_id LEFT JOIN rank_types rt ON rt.id=r.type_id LEFT JOIN weapons w ON w.id=s.weapon_id LEFT JOIN specialties sp ON sp.id=s.specialty_id WHERE 1=1";
+      "SELECT s.*,r.name rank_name,r.sort_order rank_order,rt.name rank_type,rt.color rank_color,w.name weapon_name,w.icon weapon_icon,sp.name specialty_name,(SELECT COUNT(*) FROM distinctions d WHERE d.soldier_id=s.id) as distinction_count,(SELECT COUNT(*) FROM punishments p WHERE p.soldier_id=s.id) as punishment_count,(SELECT ROUND(AVG(score),1) FROM evaluations WHERE soldier_id=s.id) as avg_score FROM soldiers s LEFT JOIN ranks r ON r.id=s.rank_id LEFT JOIN rank_types rt ON rt.id=r.type_id LEFT JOIN weapons w ON w.id=s.weapon_id LEFT JOIN specialties sp ON sp.id=s.specialty_id WHERE 1=1";
     const p = [];
     let i = 1;
     if (search) {
@@ -1836,6 +1836,225 @@ app.post("/api/soldiers/bulk-upload", auth, commanderOnly, async (req, res) => {
     }
 
     res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- FULL UPLOAD: multi-sheet Excel → entire dashboard ----
+app.post("/api/admin/full-upload", auth, commanderOnly, async (req, res) => {
+  try {
+    const { personnel, evaluations, fitness, remarks } = req.body;
+    if (!personnel || !personnel.length) return res.status(400).json({ error: "لا توجد بيانات أفراد" });
+
+    const log = { weapons: 0, ranks: 0, specialties: 0, soldiers: 0, evaluations: 0, fitness: 0, distinctions: 0, punishments: 0, errors: [] };
+
+    // 1) Clear existing data (order matters for FK constraints)
+    await db.query("DELETE FROM result_item_scores WHERE result_id IN (SELECT id FROM results WHERE result_type='evaluation')");
+    await db.query("DELETE FROM fitness_results");
+    await db.query("DELETE FROM distinctions");
+    await db.query("DELETE FROM punishment_confirmations").catch(() => {});
+    await db.query("DELETE FROM punishments");
+    await db.query("DELETE FROM results WHERE result_type='evaluation'");
+    await db.query("DELETE FROM soldiers");
+
+    // 2) Seed default fitness exercises
+    const fitnessDefs = [
+      { name: 'تمرين الجري', unit: 'ثانية', higher_is_better: false, pass_mark: 12 },
+      { name: 'تمرين الضغط', unit: 'عدد', higher_is_better: true, pass_mark: 30 },
+      { name: 'تمرين البطن', unit: 'عدد', higher_is_better: true, pass_mark: 30 },
+      { name: 'تمرين المعدية', unit: 'عدد', higher_is_better: true, pass_mark: 6 },
+    ];
+    const exerciseMap = {};
+    for (const ex of fitnessDefs) {
+      let r = await db.query("SELECT id FROM fitness_exercises WHERE name=$1", [ex.name]);
+      if (!r.rows.length) {
+        r = await db.query("INSERT INTO fitness_exercises(name,unit,higher_is_better,pass_mark) VALUES($1,$2,$3,$4) RETURNING id", [ex.name, ex.unit, ex.higher_is_better, ex.pass_mark]);
+      }
+      exerciseMap[ex.name] = r.rows[0].id;
+    }
+
+    // 3) Build lookup maps from Sheet 1
+    const weaponNames = [...new Set(personnel.map(r => r.السلاح || r.Sلاح).filter(Boolean))];
+    const specialtyNames = [...new Set(personnel.map(r => r.التخصص).filter(Boolean))];
+    const rankNames = [...new Set(personnel.map(r => r.الرتبة).filter(Boolean))];
+
+    // Create weapons
+    const weaponMap = {};
+    for (const name of weaponNames) {
+      let r = await db.query("SELECT id FROM weapons WHERE name=$1", [name]);
+      if (!r.rows.length) {
+        r = await db.query("INSERT INTO weapons(name) VALUES($1) RETURNING id", [name]);
+        log.weapons++;
+      }
+      weaponMap[name] = r.rows[0].id;
+    }
+
+    // Create specialties linked to weapons
+    const specialtyMap = {};
+    for (const row of personnel) {
+      const specName = row.التخصص;
+      const weapName = row.السلاح;
+      if (!specName || specialtyMap[specName]) continue;
+      const wid = weaponMap[weapName] || null;
+      let r = await db.query("SELECT id FROM specialties WHERE name=$1", [specName]);
+      if (!r.rows.length) {
+        r = await db.query("INSERT INTO specialties(name,weapon_id) VALUES($1,$2) RETURNING id", [specName, wid]);
+        log.specialties++;
+      }
+      specialtyMap[specName] = r.rows[0].id;
+    }
+
+    // Ranks
+    const rankMap = {};
+    for (const name of rankNames) {
+      let r = await db.query("SELECT id FROM ranks WHERE name=$1", [name]);
+      if (r.rows.length) {
+        rankMap[name] = r.rows[0].id;
+      } else {
+        r = await db.query("INSERT INTO ranks(name,sort_order) VALUES($1,0) RETURNING id", [name]);
+        rankMap[name] = r.rows[0].id;
+        log.ranks++;
+      }
+    }
+
+    // 4) Insert soldiers
+    const milIdMap = {};
+    for (const row of personnel) {
+      try {
+        const name = row.الاسم;
+        const militaryId = String(row["الرقم العسكري"]).trim();
+        if (!name || !militaryId) continue;
+
+        const rankId = rankMap[row.الرتبة] || null;
+        const weaponId = weaponMap[row.السلاح] || null;
+        const specialtyId = specialtyMap[row.التخصص] || null;
+        const status = (row.الحالة || 'active').toLowerCase();
+        const notes = row.ملاحظات || null;
+        const enlistDate = row["تاريخ الالتحاق"] || null;
+
+        const r = await db.query(
+          "INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id,status,notes,enlistment_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,military_id",
+          [name, militaryId, rankId, weaponId, specialtyId, status, notes, enlistDate]
+        );
+        milIdMap[militaryId] = r.rows[0].id;
+        log.soldiers++;
+      } catch (e) {
+        log.errors.push({ sheet: 'الأفراد', row: row.الاسم, error: e.message });
+      }
+    }
+
+    // 5) Insert evaluations (Sheet 2)
+    const sectionKeys = ['general', 'fitness', 'shooting', 'specialties', 'discipline'];
+    const evalCols = ['التقييم العام', 'اللياقة البدنية', 'الرماية', 'التخصص', 'الانضباط'];
+    if (evaluations && evaluations.length) {
+      for (const row of evaluations) {
+        try {
+          const militaryId = String(row["الرقم العسكري"]).trim();
+          const soldierId = milIdMap[militaryId];
+          if (!soldierId) { log.errors.push({ sheet: 'التقييمات', row: militaryId, error: 'جندي غير موجود' }); continue; }
+
+          const evalDate = row["تاريخ التقييم"] || new Date().toISOString().slice(0, 10);
+          const notes = row.ملاحظات || null;
+          const scores = evalCols.map(c => parseFloat(row[c]) || 0);
+          const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+          const r = await db.query(
+            "INSERT INTO results(exam_id,soldier_id,result_type,total_score,fitness_score,specialty_score,discipline_score,notes,exam_date,entered_by) VALUES(NULL,$1,'evaluation',$2,$3,$4,$5,$6,$7,$8) RETURNING id",
+            [soldierId, avg, scores[1], scores[3], scores[4], notes, evalDate, req.user.id]
+          );
+
+          // Also insert per-section evaluations for the sections page
+          for (let i = 0; i < sectionKeys.length; i++) {
+            if (scores[i] > 0) {
+              await db.query(
+                "INSERT INTO evaluations(soldier_id,section_key,score,max_score,notes,evaluated_by) VALUES($1,$2,$3,100,$4,$5)",
+                [soldierId, sectionKeys[i], scores[i], notes, req.user.id]
+              );
+            }
+          }
+          log.evaluations++;
+        } catch (e) {
+          log.errors.push({ sheet: 'التقييمات', row: row["الرقم العسكري"], error: e.message });
+        }
+      }
+    }
+
+    // 6) Insert fitness results (Sheet 3)
+    if (fitness && fitness.length) {
+      for (const row of fitness) {
+        try {
+          const militaryId = String(row["الرقم العسكري"]).trim();
+          const soldierId = milIdMap[militaryId];
+          if (!soldierId) continue;
+
+          for (const ex of fitnessDefs) {
+            const rawValue = parseFloat(row[ex.name]);
+            if (isNaN(rawValue)) continue;
+            const percent = ex.higher_is_better
+              ? Math.min(100, (rawValue / ex.pass_mark) * 100)
+              : Math.min(100, (ex.pass_mark / rawValue) * 100);
+            await db.query(
+              "INSERT INTO fitness_results(soldier_id,exercise_id,score_value,score_percent) VALUES($1,$2,$3,$4)",
+              [soldierId, exerciseMap[ex.name], rawValue, Math.round(percent * 100) / 100]
+            );
+            log.fitness++;
+          }
+        } catch (e) {
+          log.errors.push({ sheet: 'اللياقة', row: row["الرقم العسكري"], error: e.message });
+        }
+      }
+    }
+
+    // 7) Insert remarks - distinctions & punishments (Sheet 4)
+    if (remarks && remarks.length) {
+      for (const row of remarks) {
+        try {
+          const militaryId = String(row["الرقم العسكري"]).trim();
+          const soldierId = milIdMap[militaryId];
+          if (!soldierId) continue;
+
+          const type = (row.النوع || '').toLowerCase();
+          const section = (row.القسم || 'general').toLowerCase();
+          const reason = row.السبب || '';
+          if (!reason) continue;
+
+          if (type === 'distinction') {
+            await db.query(
+              "INSERT INTO distinctions(soldier_id,section_key,reason,color,given_by,is_confirmed,confirmation_count) VALUES($1,$2,$3,'gold',$4,TRUE,2)",
+              [soldierId, section, reason, req.user.id]
+            );
+            log.distinctions++;
+          } else if (type === 'punishment') {
+            await db.query(
+              "INSERT INTO punishments(soldier_id,section_key,reason,color,given_by) VALUES($1,$2,$3,'red',$4)",
+              [soldierId, section, reason, req.user.id]
+            );
+            log.punishments++;
+          }
+        } catch (e) {
+          log.errors.push({ sheet: 'الملاحظات', row: row["الرقم العسكري"], error: e.message });
+        }
+      }
+    }
+
+    res.json({ message: "✅ تم رفع جميع البيانات بنجاح", ...log });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- LEAVE RETURN: mark soldier returned from leave ----
+app.patch("/api/soldiers/:id/confirm-return", auth, commanderOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const today = new Date().toISOString().slice(0, 10);
+    const { rows } = await db.query(
+      "UPDATE soldiers SET status='active', last_leave_end=$1 WHERE id=$2 RETURNING id,name,military_id,status,last_leave_end",
+      [today, id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json(rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

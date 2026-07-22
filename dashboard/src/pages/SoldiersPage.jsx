@@ -48,6 +48,16 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
     return user?.permissions?.canDistinguish || user?.permissions?.canPunish;
   }
 
+  async function handleConfirmReturn(soldier) {
+    if (!window.confirm(`تأكيد عودة ${soldier.name} من الإجازة؟`)) return;
+    try {
+      await api.confirmReturn(soldier.id);
+      onRefresh?.();
+    } catch (e) {
+      alert('خطأ: ' + e.message);
+    }
+  }
+
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -113,6 +123,10 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
                   <span className={`badge ${s.status === 'active' ? 'bg-success' : s.status === 'leave' ? 'bg-warning' : 'bg-info'}`}>
                     {STATUS_OPTIONS.find(o => o.value === s.status)?.label || s.status || 'نشط'}
                   </span>
+                  {s.status === 'leave' && canGiveAction() && (
+                    <button className="btn btn-sm btn-outline-success py-0 px-1 ms-1" style={{ fontSize: '0.6rem' }}
+                      title="تأكيد العودة" onClick={e => { e.stopPropagation(); handleConfirmReturn(s); }}>↩</button>
+                  )}
                 </td>
                 <td>{s.avg_score != null ? <ScoreBadge score={s.avg_score} /> : '-'}</td>
                 <td className="small">{s.distinction_count || 0}</td>
@@ -148,6 +162,10 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
                 <span className={`badge ${s.status === 'active' ? 'bg-success' : s.status === 'leave' ? 'bg-warning' : 'bg-info'}`} style={{ fontSize: '0.6rem' }}>
                   {STATUS_OPTIONS.find(o => o.value === s.status)?.label || 'نشط'}
                 </span>
+                {s.status === 'leave' && canGiveAction() && (
+                  <button className="btn btn-sm btn-outline-success py-0" style={{ fontSize: '0.6rem' }}
+                    title="تأكيد العودة" onClick={e => { e.stopPropagation(); handleConfirmReturn(s); }}>↩</button>
+                )}
               </div>
               {canGiveAction() && (
                 <div className="d-flex gap-1 justify-content-center mt-1" onClick={e => e.stopPropagation()}>

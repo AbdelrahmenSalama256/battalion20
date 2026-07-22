@@ -151,6 +151,8 @@ export const api = {
 
   // Bulk upload
   bulkUpload: (soldiers) => req('POST', '/soldiers/bulk-upload', { soldiers }),
+  fullUpload: (data) => req('POST', '/admin/full-upload', data),
+  confirmReturn: (id) => req('PATCH', `/soldiers/${id}/confirm-return`),
 
   // Admin
   seed: () => req('POST', '/admin/seed'),
