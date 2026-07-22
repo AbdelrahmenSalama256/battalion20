@@ -189,7 +189,7 @@ app.get("/api", (req, res) =>
 
 // PUBLIC: one-time setup — creates tables + admin user
 let setupDone = false;
-app.post("/api/admin/setup", async (req, res) => {
+app.all("/api/admin/setup", async (req, res) => {
   try {
     if (setupDone) return res.json({ message: "Setup already done" });
     await runMigrations();
