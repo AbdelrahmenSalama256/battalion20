@@ -202,7 +202,7 @@ app.get("/api", (req, res) =>
 let setupDone = false;
 app.all("/api/admin/setup", async (req, res) => {
   try {
-    if (setupDone) return res.json({ message: "Setup already done" });
+    // All statements use IF NOT EXISTS / ON CONFLICT DO NOTHING, so safe to re-run
 
     // Create core tables first
     const coreTables = [
