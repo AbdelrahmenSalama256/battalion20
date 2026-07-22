@@ -192,7 +192,27 @@ let setupDone = false;
 app.all("/api/admin/setup", async (req, res) => {
   try {
     if (setupDone) return res.json({ message: "Setup already done" });
+
+    // Create core tables first
+    const coreTables = [
+      "CREATE TABLE IF NOT EXISTS rank_types (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(100) UNIQUE NOT NULL, color VARCHAR(20))",
+      "CREATE TABLE IF NOT EXISTS ranks (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(100) NOT NULL, type_id UUID REFERENCES rank_types(id), sort_order INT DEFAULT 0)",
+      "CREATE TABLE IF NOT EXISTS weapons (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(100) UNIQUE NOT NULL, icon VARCHAR(10), color VARCHAR(20))",
+      "CREATE TABLE IF NOT EXISTS specialties (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(200) NOT NULL, weapon_id UUID REFERENCES weapons(id) ON DELETE SET NULL, description TEXT)",
+      "CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(150) NOT NULL, username VARCHAR(100) UNIQUE NOT NULL, password_hash TEXT NOT NULL, role VARCHAR(50) DEFAULT 'viewer', is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW(), rank_id UUID, permissions JSONB DEFAULT '{}', avatar_url TEXT)",
+      "CREATE TABLE IF NOT EXISTS soldiers (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(200) NOT NULL, military_id VARCHAR(50) UNIQUE, rank_id UUID REFERENCES ranks(id), weapon_id UUID REFERENCES weapons(id), specialty_id UUID REFERENCES specialties(id), notes TEXT, status VARCHAR(20) DEFAULT 'active', created_at TIMESTAMPTZ DEFAULT NOW())",
+      "CREATE TABLE IF NOT EXISTS exams (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, type VARCHAR(50), weapon_id UUID REFERENCES weapons(id), specialty_id UUID REFERENCES specialties(id), created_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())",
+      "CREATE TABLE IF NOT EXISTS results (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), exam_id UUID REFERENCES exams(id), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, result_type VARCHAR(50) DEFAULT 'exam', total_score NUMERIC(6,2), fitness_score NUMERIC(6,2), specialty_score NUMERIC(6,2), discipline_score NUMERIC(6,2), notes TEXT, exam_date DATE, entered_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())",
+      "CREATE TABLE IF NOT EXISTS fitness_exercises (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(200) NOT NULL, unit VARCHAR(50), higher_is_better BOOLEAN DEFAULT TRUE, pass_mark NUMERIC(5,2) DEFAULT 60)",
+    ];
+    for (const sql of coreTables) {
+      try { await pool.query(sql); } catch (e) { console.log("Table skip:", e.message); }
+    }
+
+    // Run secondary migrations (ALTER TABLE, extra tables)
     await runMigrations();
+
+    // Create admin user
     const { rows: existing } = await db.query("SELECT id FROM users WHERE username='commander'");
     if (!existing.length) {
       const hash = await bcrypt.hash("1234", 10);
