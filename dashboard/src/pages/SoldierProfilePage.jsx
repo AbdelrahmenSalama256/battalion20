@@ -30,16 +30,45 @@ export default function SoldierProfilePage({ user, onRefresh }) {
   const [soldier, setSoldier] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
+  const [evalForm, setEvalForm] = useState({ section_key: 'general', score: '', notes: '' });
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [leaves, setLeaves] = useState([]);
 
   useEffect(() => { loadSoldier(); }, [id]);
 
   async function loadSoldier() {
     setLoading(true);
     try {
-      const data = await api.getSoldier(id);
+      const [data, lvRes] = await Promise.all([
+        api.getSoldier(id),
+        api.getLeaves({ soldier_id: id }).catch(() => ({ leaves: [] }))
+      ]);
       setSoldier(data);
+      setLeaves(lvRes.leaves || []);
     } catch (e) { console.error(e); }
     setLoading(false);
+  }
+
+  async function handleEvaluate(e) {
+    e.preventDefault();
+    if (!evalForm.score) return;
+    setEvalLoading(true);
+    try {
+      await api.createEvaluation({ soldier_id: id, section_key: evalForm.section_key, score: parseFloat(evalForm.score), max_score: 100, notes: evalForm.notes || null });
+      setEvalForm({ section_key: evalForm.section_key, score: '', notes: '' });
+      await loadSoldier();
+      if (onRefresh) onRefresh();
+    } catch (err) { alert(err.message); }
+    setEvalLoading(false);
+  }
+
+  async function handleConfirmReturn() {
+    if (!window.confirm(`تأكيد عودة ${soldier.name} من الإجازة؟`)) return;
+    try {
+      await api.confirmReturnSoldier(id);
+      await loadSoldier();
+      if (onRefresh) onRefresh();
+    } catch (err) { alert(err.message); }
   }
 
   if (loading) return <div className="text-center p-5 text-muted-military">جاري التحميل...</div>;
@@ -89,6 +118,9 @@ export default function SoldierProfilePage({ user, onRefresh }) {
             <div className="mt-2">
               <span className={`badge ${status.class}`}>{status.label}</span>
               {soldier.status_notes && <span className="small text-muted-military me-2">({soldier.status_notes})</span>}
+              {soldier.status === 'leave' && user?.role === 'commander' && (
+                <button className="btn btn-sm btn-outline-success ms-2 py-0" onClick={handleConfirmReturn}>✓ تأكيد العودة</button>
+              )}
             </div>
             {specialties.length > 0 && (
               <div className="mt-2">
@@ -150,6 +182,41 @@ export default function SoldierProfilePage({ user, onRefresh }) {
       {/* Overview Tab */}
       {activeTab === 'overview' && (
         <div>
+          {/* Evaluation Form */}
+          {(user?.role === 'commander' || user?.permissions?.canEvaluate) && (
+            <div className="card border-military p-3 mb-4">
+              <h5 className="text-gold mb-3">إضافة تقييم</h5>
+              <form onSubmit={handleEvaluate}>
+                <div className="row g-2 align-items-end">
+                  <div className="col-md-3">
+                    <label className="form-label small text-muted-military">السيكشن</label>
+                    <select className="form-select form-select-sm bg-dark text-light border-military"
+                      value={evalForm.section_key} onChange={e => setEvalForm({ ...evalForm, section_key: e.target.value })}>
+                      {SECTION_KEYS.map(sk => <option key={sk} value={sk}>{SECTION_NAMES[sk]}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-2">
+                    <label className="form-label small text-muted-military">الدرجة (0-100)</label>
+                    <input type="number" min="0" max="100" step="0.5" className="form-control form-control-sm bg-dark text-light border-military"
+                      placeholder="الدرجة" value={evalForm.score}
+                      onChange={e => setEvalForm({ ...evalForm, score: e.target.value })} required />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small text-muted-military">ملاحظات</label>
+                    <input type="text" className="form-control form-control-sm bg-dark text-light border-military"
+                      placeholder="ملاحظات (اختياري)" value={evalForm.notes}
+                      onChange={e => setEvalForm({ ...evalForm, notes: e.target.value })} />
+                  </div>
+                  <div className="col-md-3">
+                    <button type="submit" className="btn btn-sm btn-gold w-100" disabled={evalLoading}>
+                      {evalLoading ? 'جاري الحفظ...' : 'حفظ التقييم'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
+
           <h5 className="text-gold mb-3">الإحصائيات حسب السيكشن</h5>
           <div className="row g-2 mb-4">
             {SECTION_KEYS.map(sk => {
@@ -212,6 +279,47 @@ export default function SoldierProfilePage({ user, onRefresh }) {
               ))
               )}
           </div>
+
+          {/* Leave History */}
+          {leaves.length > 0 && (
+            <>
+              <h5 className="text-gold mb-3 mt-4">سجل الإجازات</h5>
+              <div className="table-responsive">
+                <table className="table table-sm table-hover border-military">
+                  <thead>
+                    <tr className="text-gold small">
+                      <th>من</th>
+                      <th>إلى</th>
+                      <th>النوع</th>
+                      <th>الحالة</th>
+                      <th>ملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leaves.slice(0, 10).map(lv => (
+                      <tr key={lv.id}>
+                        <td className="small">{lv.start_date ? new Date(lv.start_date).toLocaleDateString('ar-EG') : '-'}</td>
+                        <td className="small">{lv.end_date ? new Date(lv.end_date).toLocaleDateString('ar-EG') : '-'}</td>
+                        <td className="small">{lv.leave_type || 'عادية'}</td>
+                        <td className="small">
+                          <span className={`badge ${lv.status === 'completed' ? 'bg-success' : lv.status === 'active' ? 'bg-warning' : 'bg-secondary'}`}>
+                            {lv.status === 'completed' ? 'مكتملة' : lv.status === 'active' ? 'نشط' : lv.status === 'cancelled' ? 'ملغاة' : lv.status}
+                          </span>
+                        </td>
+                        <td className="small text-muted-military">{lv.notes || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {soldier.last_leave_end && (
+            <div className="small text-muted-military mt-2">
+              آخر عودة من الإجازة: {new Date(soldier.last_leave_end).toLocaleDateString('ar-EG')}
+            </div>
+          )}
         </div>
       )}
 

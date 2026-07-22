@@ -73,7 +73,7 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
   async function handleConfirmReturn(soldier) {
     if (!window.confirm(`تأكيد عودة ${soldier.name} من الإجازة؟`)) return;
     try {
-      await api.confirmReturn(soldier.id);
+      await api.confirmReturnSoldier(soldier.id);
       onRefresh?.();
     } catch (e) {
       alert('خطأ: ' + e.message);

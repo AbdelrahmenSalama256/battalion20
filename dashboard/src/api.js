@@ -149,7 +149,7 @@ export const api = {
   getOverdueReturns: () => req('GET', '/leaves/overdue-return'),
   getSoldiersNeedingLeave: () => req('GET', '/leaves/needing-leave'),
   createLeave: (data) => req('POST', '/leaves', data),
-  confirmReturn: (id) => req('PATCH', `/leaves/${id}/confirm-return`),
+  confirmReturnLeaves: (id) => req('PATCH', `/leaves/${id}/confirm-return`),
   cancelLeave: (id) => req('PATCH', `/leaves/${id}/cancel`),
   getPersonnelDashboard: () => req('GET', '/leaves/dashboard'),
 
@@ -164,7 +164,7 @@ export const api = {
   // Bulk upload
   bulkUpload: (soldiers) => req('POST', '/soldiers/bulk-upload', { soldiers }),
   fullUpload: (data) => req('POST', '/admin/full-upload', data),
-  confirmReturn: (id) => req('PATCH', `/soldiers/${id}/confirm-return`),
+  confirmReturnSoldier: (id) => req('PATCH', `/soldiers/${id}/confirm-return`),
 
   // Admin
   seed: () => req('POST', '/admin/seed'),

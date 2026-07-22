@@ -69,7 +69,7 @@ export default function PersonnelPage({ user, soldiers }) {
 
   const confirmReturn = async (id) => {
     try {
-      await api.confirmReturn(id);
+      await api.confirmReturnLeaves(id);
       load();
     } catch (e) {
       alert(e.message);
