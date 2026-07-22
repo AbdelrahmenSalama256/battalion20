@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import { smartMatch } from '../utils/translit';
 import Modal from '../components/Modal';
 import BulkDeleteBar from '../components/BulkDeleteBar';
 
@@ -11,6 +12,7 @@ export default function ExamsPage({ user, specialties }) {
   const [filterSection, setFilterSection] = useState('');
   const [showForm, setShowForm] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [search, setSearch] = useState('');
 
   useEffect(() => { loadExams(); }, []);
 
@@ -27,6 +29,10 @@ export default function ExamsPage({ user, specialties }) {
 
   const canManage = user?.role === 'commander';
 
+  const filteredExams = exams.filter(ex =>
+    !search || ex.title?.includes(search) || ex.specialty_name?.includes(search)
+  );
+
   function toggleSelect(id) {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -37,8 +43,8 @@ export default function ExamsPage({ user, specialties }) {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === exams.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(exams.map(e => e.id)));
+    if (selectedIds.size === filteredExams.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filteredExams.map(e => e.id)));
   }
 
   async function handleBulkDelete(ids) {
@@ -67,21 +73,23 @@ export default function ExamsPage({ user, specialties }) {
         {canManage && exams.length > 0 && (
           <div className="d-flex align-items-center gap-2">
             <label className="d-flex align-items-center gap-1 small text-muted-military" style={{ cursor: 'pointer' }}>
-              <input type="checkbox" checked={selectedIds.size === exams.length && exams.length > 0}
+              <input type="checkbox" checked={selectedIds.size === filteredExams.length && filteredExams.length > 0}
                 onChange={toggleSelectAll} style={{ accentColor: 'var(--military-gold-bright)' }} />
               تحديد الكل
             </label>
           </div>
         )}
+        <input placeholder="بحث في الامتحانات..." value={search} onChange={e => setSearch(e.target.value)}
+          className="form-control form-control-sm bg-dark text-light border-military" style={{ maxWidth: 200, fontSize: 12 }} />
       </div>
 
       {loading ? (
         <div className="text-center p-4 text-muted-military">جاري التحميل...</div>
-      ) : exams.length === 0 ? (
-        <div className="text-center p-4 text-muted-military">لا توجد امتحانات</div>
+      ) : filteredExams.length === 0 ? (
+        <div className="text-center p-4 text-muted-military">{search ? 'لا توجد نتائج' : 'لا توجد امتحانات'}</div>
       ) : (
         <div className="row g-2">
-          {exams.map(ex => (
+          {filteredExams.map(ex => (
             <div key={ex.id} className="col-12 col-md-6">
               <div className={`card border-military p-3 ${selectedIds.has(ex.id) ? 'border-gold' : ''}`}>
                 <div className="d-flex justify-content-between align-items-start">

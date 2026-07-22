@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { smartMatch } from '../utils/translit';
 import Modal from '../components/Modal';
 import BulkDeleteBar from '../components/BulkDeleteBar';
 
@@ -25,6 +26,11 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
   const [showForm, setShowForm] = useState(false);
   const [editUser, setEditUser] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [search, setSearch] = useState('');
+
+  const filtered = users.filter(u =>
+    !search || smartMatch(search, u.name) || smartMatch(search, u.username || '')
+  );
 
   function toggleSelect(id) {
     setSelectedIds(prev => {
@@ -36,8 +42,8 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === users.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(users.map(u => u.id)));
+    if (selectedIds.size === filtered.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filtered.map(u => u.id)));
   }
 
   async function handleBulkDelete(ids) {
@@ -50,7 +56,11 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
     <div>
       <div className="d-flex justify-content-between align-items-center mb-3">
         <h4 className="text-gold mb-0">المستخدمين</h4>
-        <button onClick={() => setShowForm(true)} className="btn btn-gold btn-sm">+ إضافة مستخدم</button>
+        <div className="d-flex gap-2 align-items-center">
+          <input placeholder="بحث بالاسم..." value={search} onChange={e => setSearch(e.target.value)}
+            className="form-control form-control-sm bg-dark text-light border-military" style={{ maxWidth: 200, fontSize: 12 }} />
+          <button onClick={() => setShowForm(true)} className="btn btn-gold btn-sm">+ إضافة مستخدم</button>
+        </div>
       </div>
 
       <div className="table-responsive">
@@ -58,7 +68,7 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
           <thead>
             <tr className="text-gold small">
               {user?.role === 'commander' && <th style={{ width: 30 }}>
-                <input type="checkbox" checked={users.length > 0 && selectedIds.size === users.length}
+                <input type="checkbox" checked={filtered.length > 0 && selectedIds.size === filtered.length}
                   onChange={toggleSelectAll} style={{ accentColor: 'var(--military-gold-bright)' }} />
               </th>}
               <th>#</th>
@@ -71,7 +81,7 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
             </tr>
           </thead>
           <tbody>
-            {users.map((u, i) => (
+            {filtered.map((u, i) => (
               <tr key={u.id} className={u.is_active ? '' : 'opacity-50'}>
                 {user?.role === 'commander' && <td onClick={e => e.stopPropagation()}>
                   <input type="checkbox" checked={selectedIds.has(u.id)} onChange={() => toggleSelect(u.id)}
@@ -97,8 +107,8 @@ export default function UsersPage({ users, ranks, onRefresh, user }) {
                 </td>
               </tr>
             ))}
-            {users.length === 0 && (
-              <tr><td colSpan={8} className="text-center text-muted-military small py-3">لا توجد نتائج</td></tr>
+            {filtered.length === 0 && (
+              <tr><td colSpan={8} className="text-center text-muted-military small py-3">{search ? 'لا توجد نتائج' : 'لا توجد نتائج'}</td></tr>
             )}
           </tbody>
         </table>

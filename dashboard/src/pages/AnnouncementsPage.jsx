@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import { smartMatch } from '../utils/translit';
 import Modal from '../components/Modal';
 import BulkDeleteBar from '../components/BulkDeleteBar';
 
@@ -8,6 +9,7 @@ export default function AnnouncementsPage({ user }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [search, setSearch] = useState('');
 
   useEffect(() => { load(); }, []);
 
@@ -32,8 +34,8 @@ export default function AnnouncementsPage({ user }) {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === announcements.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(announcements.map(a => a.id)));
+    if (selectedIds.size === filtered.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filtered.map(a => a.id)));
   }
 
   async function handleBulkDelete(ids) {
@@ -41,6 +43,10 @@ export default function AnnouncementsPage({ user }) {
     setSelectedIds(new Set());
     load();
   }
+
+  const filtered = announcements.filter(a =>
+    !search || a.title?.includes(search) || a.body?.includes(search)
+  );
 
   const priorityStyles = {
     urgent: { bg: 'bg-danger', label: 'عاجل' },
@@ -57,10 +63,15 @@ export default function AnnouncementsPage({ user }) {
         )}
       </div>
 
-      {canManage && announcements.length > 0 && (
+      <div className="mb-3">
+        <input placeholder="بحث في الإعلانات..." value={search} onChange={e => setSearch(e.target.value)}
+          className="form-control form-control-sm bg-dark text-light border-military" style={{ maxWidth: 250, fontSize: 12 }} />
+      </div>
+
+      {canManage && filtered.length > 0 && (
         <div className="mb-3">
           <label className="d-flex align-items-center gap-1 small text-muted-military" style={{ cursor: 'pointer' }}>
-            <input type="checkbox" checked={selectedIds.size === announcements.length && announcements.length > 0}
+            <input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0}
               onChange={toggleSelectAll} style={{ accentColor: 'var(--military-gold-bright)' }} />
             تحديد الكل
           </label>
@@ -69,11 +80,11 @@ export default function AnnouncementsPage({ user }) {
 
       {loading ? (
         <div className="text-center p-4 text-muted-military">جاري التحميل...</div>
-      ) : announcements.length === 0 ? (
-        <div className="text-center p-4 text-muted-military">لا توجد إعلانات</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center p-4 text-muted-military">{search ? 'لا توجد نتائج' : 'لا توجد إعلانات'}</div>
       ) : (
         <div className="row g-2">
-          {announcements.map(a => {
+          {filtered.map(a => {
             const ps = priorityStyles[a.priority] || priorityStyles.normal;
             return (
               <div key={a.id} className="col-12">

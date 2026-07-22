@@ -2105,6 +2105,8 @@ app.post("/api/admin/full-upload", auth, commanderOnly, async (req, res) => {
 
     // 4) Insert soldiers
     const milIdMap = {};
+    const sampleRow = personnel[0] ? Object.keys(personnel[0]) : [];
+    log.excelColumns = sampleRow;
     for (const row of personnel) {
       try {
         const name = row.الاسم;
@@ -2118,8 +2120,33 @@ app.post("/api/admin/full-upload", auth, commanderOnly, async (req, res) => {
         const statusMap = { 'نشط': 'active', 'active': 'active', 'إجازة': 'leave', 'leave': 'leave', 'مأمورية': 'mission', 'mission': 'mission', 'أخرى': 'other', 'other': 'other' };
         const status = statusMap[statusRaw] || 'active';
         const notes = row.ملاحظات || null;
-        const enlistDate = row["تاريخ الالتحاق"] || null;
-        const lastLeaveEnd = row["تاريخ العودة الاخير"] || row["تاريخ العودة الأخير"] || null;
+        let enlistDate = row["تاريخ الالتحاق"] || null;
+        if (enlistDate && typeof enlistDate === 'number') {
+          const d = new Date((enlistDate - 25569) * 86400 * 1000);
+          enlistDate = d.toISOString().slice(0, 10);
+        }
+        if (enlistDate && typeof enlistDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(enlistDate) === false) {
+          const parsed = new Date(enlistDate);
+          if (!isNaN(parsed.getTime())) enlistDate = parsed.toISOString().slice(0, 10);
+          else enlistDate = null;
+        }
+
+        let lastLeaveEnd = null;
+        for (const key of Object.keys(row)) {
+          if (key.includes('العود') || key.includes('last_leave') || key.includes('LAST')) {
+            lastLeaveEnd = row[key];
+            break;
+          }
+        }
+        if (lastLeaveEnd && typeof lastLeaveEnd === 'number') {
+          const d = new Date((lastLeaveEnd - 25569) * 86400 * 1000);
+          lastLeaveEnd = d.toISOString().slice(0, 10);
+        }
+        if (lastLeaveEnd && typeof lastLeaveEnd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(lastLeaveEnd) === false) {
+          const parsed = new Date(lastLeaveEnd);
+          if (!isNaN(parsed.getTime())) lastLeaveEnd = parsed.toISOString().slice(0, 10);
+          else lastLeaveEnd = null;
+        }
 
         const r = await db.query(
           "INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id,status,notes,enlistment_date,last_leave_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,military_id",

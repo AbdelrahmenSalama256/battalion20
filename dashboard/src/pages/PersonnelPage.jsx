@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
+import { smartMatch } from '../utils/translit';
 
 export default function PersonnelPage({ user, soldiers }) {
   const [dash, setDash] = useState(null);
@@ -11,6 +12,8 @@ export default function PersonnelPage({ user, soldiers }) {
   const [leaveForm, setLeaveForm] = useState({ soldier_id: '', start_date: '', end_date: '', notes: '' });
   const [soldierInfo, setSoldierInfo] = useState(null);
   const [soldierInfoLoading, setSoldierInfoLoading] = useState(false);
+  const [searchNeeding, setSearchNeeding] = useState('');
+  const [searchActive, setSearchActive] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,6 +80,13 @@ export default function PersonnelPage({ user, soldiers }) {
     return <div className="d-flex justify-content-center p-5"><div className="loading-spinner" /></div>;
   }
 
+  const filteredNeeding = needing.filter(s =>
+    !searchNeeding || smartMatch(searchNeeding, s.name) || smartMatch(searchNeeding, s.military_id || '')
+  );
+  const filteredLeaves = leaves.filter(l =>
+    !searchActive || smartMatch(searchActive, l.soldier_name) || smartMatch(searchActive, l.military_id || '')
+  );
+
   return (
     <div className="container-fluid py-3" dir="rtl">
       <div className="d-flex justify-content-between align-items-center mb-3">
@@ -105,13 +115,13 @@ export default function PersonnelPage({ user, soldiers }) {
         </div>
         <div className="col-md-3 col-6">
           <div className="card bg-card border-military p-3 text-center stat-card">
-            <div className="text-danger fs-3 fw-bold">{dash?.needingLeave || 0}</div>
+            <div className="text-danger fs-3 fw-bold">{dash?.needWarning?.length || needing.length || 0}</div>
             <div className="text-muted-military small">يحتاج إجازة (أكثر من 21 يوم)</div>
           </div>
         </div>
         <div className="col-md-3 col-6">
           <div className="card bg-card border-military p-3 text-center stat-card">
-            <div className="text-success fs-3 fw-bold">{dash?.returningToday || 0}</div>
+            <div className="text-success fs-3 fw-bold">{dash?.returningTodayCount || dash?.returningToday || 0}</div>
             <div className="text-muted-military small">العودة اليوم</div>
           </div>
         </div>
@@ -119,16 +129,20 @@ export default function PersonnelPage({ user, soldiers }) {
 
       {/* Needing leave */}
       <div className="card bg-card border-military mb-4">
-        <div className="card-header bg-transparent border-military d-flex justify-content-between align-items-center">
+        <div className="card-header bg-transparent border-military d-flex justify-content-between align-items-center flex-wrap gap-2">
           <span className="text-danger fw-bold">⚠ أفراد تجاوزوا 21 يوم بدون إجازة</span>
-          <span className="badge bg-danger">{needing.length}</span>
+          <div className="d-flex gap-2 align-items-center">
+            <input placeholder="بحث..." value={searchNeeding} onChange={e => setSearchNeeding(e.target.value)}
+              className="form-control form-control-sm bg-dark text-light border-military" style={{ maxWidth: 180, fontSize: 12 }} />
+            <span className="badge bg-danger">{filteredNeeding.length}</span>
+          </div>
         </div>
         <div className="card-body p-0">
           <div className="table-responsive">
             <table className="table table-dark table-sm mb-0">
               <thead><tr><th>#</th><th>الرتبة</th><th>الاسم</th><th>الرقم العسكري</th><th>أيام بدون إجازة</th><th></th></tr></thead>
               <tbody>
-                {needing.map((s, i) => (
+                {filteredNeeding.map((s, i) => (
                   <tr key={s.id}>
                     <td>{i + 1}</td>
                     <td><span className="text-gold">{s.rank_name || ''}</span></td>
@@ -142,7 +156,7 @@ export default function PersonnelPage({ user, soldiers }) {
                     </td>
                   </tr>
                 ))}
-                {!needing.length && <tr><td colSpan={6} className="text-center text-muted-military small py-3">جميع الأفراد ضمن المدة النظامية ✓</td></tr>}
+                {filteredNeeding.length === 0 && <tr><td colSpan={6} className="text-center text-muted-military small py-3">{searchNeeding ? 'لا توجد نتائج' : 'جميع الأفراد ضمن المدة النظامية ✓'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -151,16 +165,20 @@ export default function PersonnelPage({ user, soldiers }) {
 
       {/* Active leaves */}
       <div className="card bg-card border-military mb-4">
-        <div className="card-header bg-transparent border-military d-flex justify-content-between align-items-center">
+        <div className="card-header bg-transparent border-military d-flex justify-content-between align-items-center flex-wrap gap-2">
           <span className="text-warning fw-bold">📋 إجازات نشطة</span>
-          <span className="badge bg-warning text-dark">{leaves.length}</span>
+          <div className="d-flex gap-2 align-items-center">
+            <input placeholder="بحث..." value={searchActive} onChange={e => setSearchActive(e.target.value)}
+              className="form-control form-control-sm bg-dark text-light border-military" style={{ maxWidth: 180, fontSize: 12 }} />
+            <span className="badge bg-warning text-dark">{filteredLeaves.length}</span>
+          </div>
         </div>
         <div className="card-body p-0">
           <div className="table-responsive">
             <table className="table table-dark table-sm mb-0">
               <thead><tr><th>#</th><th>الجندي</th><th>الرقم العسكري</th><th>من</th><th>إلى</th><th>الأيام المتبقية</th><th>الحالة</th><th></th></tr></thead>
               <tbody>
-                {leaves.map((l, i) => {
+                {filteredLeaves.map((l, i) => {
                   const remaining = l.remaining_days !== null ? parseInt(l.remaining_days) : null;
                   const isOverdue = remaining !== null && remaining < 0;
                   const isToday = remaining === 0;
@@ -199,7 +217,7 @@ export default function PersonnelPage({ user, soldiers }) {
                     </tr>
                   );
                 })}
-                {!leaves.length && <tr><td colSpan={8} className="text-center text-muted-military small py-3">لا توجد إجازات نشطة</td></tr>}
+                {filteredLeaves.length === 0 && <tr><td colSpan={8} className="text-center text-muted-military small py-3">{searchActive ? 'لا توجد نتائج' : 'لا توجد إجازات نشطة'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -286,7 +304,7 @@ export default function PersonnelPage({ user, soldiers }) {
                     <select className="form-select" value={leaveForm.soldier_id} required
                       onChange={e => { setLeaveForm(f => ({ ...f, soldier_id: e.target.value })); setSoldierInfo(null); }}>
                       <option value="">اختر جندي...</option>
-                      {(soldiers || []).filter(s => s.status !== 'إجازة').map(s => (
+                      {(soldiers || []).filter(s => s.status !== 'leave').map(s => (
                         <option key={s.id} value={s.id}>{s.name} ({s.military_id || '—'})</option>
                       ))}
                     </select>

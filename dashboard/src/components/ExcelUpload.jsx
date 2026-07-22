@@ -138,6 +138,11 @@ export default function ExcelUpload({ onDone }) {
               {result.weapons > 0 && <div>🔫 أسلحة جديدة: {result.weapons}</div>}
               {result.specialties > 0 && <div>🎯 تخصصات جديدة: {result.specialties}</div>}
               {result.ranks > 0 && <div>🎖️ رتب جديدة: {result.ranks}</div>}
+              {result.excelColumns && (
+                <div style={{ fontSize: 10, color: 'rgba(232,224,208,0.4)' }}>
+                  أعمدة الإكسيل: {result.excelColumns.join(' | ')}
+                </div>
+              )}
               {result.errors?.length > 0 && (
                 <div className="mt-2" style={{ color: '#F7DC6F' }}>
                   ⚠️ {result.errors.length} أخطاء:
