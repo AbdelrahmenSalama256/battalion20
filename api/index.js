@@ -168,6 +168,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use((req, res, next) => {
   if (req.path.startsWith("/.netlify/functions/api"))
     req.url = "/api" + req.url.substring("/.netlify/functions/api".length);
+  if (!req.path.startsWith("/api")) req.url = "/api" + req.url;
   next();
 });
 
