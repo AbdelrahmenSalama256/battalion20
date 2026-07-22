@@ -96,6 +96,7 @@ async function runMigrations() {
   await pool.query("CREATE TABLE IF NOT EXISTS punishments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, section_key VARCHAR(50) NOT NULL, specialty_id UUID REFERENCES specialties(id), reason TEXT NOT NULL, color VARCHAR(20) DEFAULT 'red', given_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW())");
   await pool.query("CREATE TABLE IF NOT EXISTS distinction_confirmations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), distinction_id UUID NOT NULL, user_id UUID REFERENCES users(id), confirmed_at TIMESTAMPTZ DEFAULT NOW())");
   try { await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_distinction_confirmations_unique ON distinction_confirmations(distinction_id, user_id)"); } catch (e) {}
+  await pool.query("CREATE TABLE IF NOT EXISTS announcements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title VARCHAR(200) NOT NULL, content TEXT, priority VARCHAR(20) DEFAULT 'info', created_by UUID REFERENCES users(id), created_at TIMESTAMZ DEFAULT NOW())");
   console.log("Migrations done");
 }
 
@@ -1573,31 +1574,19 @@ app.use("/api/users", us);
 
 // ADMIN (seed data)
 app.post("/api/admin/seed", auth, commanderOnly, async (req, res) => {
+  const results = {};
+  const safe = async (label, fn) => { try { await fn(); results[label] = 'ok'; } catch (e) { results[label] = e.message; } };
   try {
-    await db.query(
-      "INSERT INTO weapons(name,icon)VALUES('المشاة','🔫'),('المدرعات','🛡️'),('المدفعية','💣'),('الإشارة','📡'),('المهندسين','🔧') ON CONFLICT DO NOTHING",
-    );
-    await db.query(
-      "INSERT INTO rank_types(name,color)VALUES('ضباط','#C9A84C'),('صف ضباط','#9CAF88'),('جنود','#2D6A4F') ON CONFLICT DO NOTHING",
-    );
-    await db.query(
-      "WITH rt AS (SELECT id FROM rank_types WHERE name='ضباط' LIMIT 1), srt AS (SELECT id FROM rank_types WHERE name='صف ضباط' LIMIT 1), jrt AS (SELECT id FROM rank_types WHERE name='جنود' LIMIT 1) INSERT INTO ranks(name,type_id,sort_order) SELECT * FROM (VALUES('جندي',(SELECT id FROM jrt),1),('جندي أول',(SELECT id FROM jrt),2),('عريف',(SELECT id FROM srt),3),('وكيل رقيب',(SELECT id FROM srt),4),('رقيب',(SELECT id FROM srt),5),('رقيب أول',(SELECT id FROM srt),6),('مساعد',(SELECT id FROM srt),7),('مساعد أول',(SELECT id FROM srt),8),('ملازم',(SELECT id FROM rt),9),('ملازم أول',(SELECT id FROM rt),10),('نقيب',(SELECT id FROM rt),11),('رائد',(SELECT id FROM rt),12),('مقدم',(SELECT id FROM rt),13),('عقيد',(SELECT id FROM rt),14)) AS v WHERE NOT EXISTS(SELECT 1 FROM ranks)",
-    );
-    await db.query(
-      "INSERT INTO specialties(name,weapon_id)SELECT 'قناص',(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons)",
-    );
-    await db.query(
-      "INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id)SELECT 'جندي تجريبي','12345',(SELECT id FROM ranks WHERE name='جندي' LIMIT 1),(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1),(SELECT id FROM specialties LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons)",
-    );
-    await db.query(
-      "INSERT INTO exams(section_key,title)SELECT 'fitness','اختبار تجريبي' WHERE EXISTS(SELECT 1 FROM weapons)",
-    );
-    await db.query(
-      "INSERT INTO announcements(title,content,priority,created_by)SELECT 'مرحباً','المنصة جاهزة للعمل','info',(SELECT id FROM users WHERE role='commander' LIMIT 1)",
-    );
-    res.json({ message: "✅ تم إضافة بيانات تجريبية" });
+    await safe('weapons', () => db.query("INSERT INTO weapons(name,icon)VALUES('المشاة','🔫'),('المدرعات','🛡️'),('المدفعية','💣'),('الإشارة','📡'),('المهندسين','🔧') ON CONFLICT DO NOTHING"));
+    await safe('rank_types', () => db.query("INSERT INTO rank_types(name,color)VALUES('ضباط','#C9A84C'),('صف ضباط','#9CAF88'),('جنود','#2D6A4F') ON CONFLICT DO NOTHING"));
+    await safe('ranks', () => db.query("WITH rt AS (SELECT id FROM rank_types WHERE name='ضباط' LIMIT 1), srt AS (SELECT id FROM rank_types WHERE name='صف ضباط' LIMIT 1), jrt AS (SELECT id FROM rank_types WHERE name='جنود' LIMIT 1) INSERT INTO ranks(name,type_id,sort_order) SELECT * FROM (VALUES('جندي',(SELECT id FROM jrt),1),('جندي أول',(SELECT id FROM jrt),2),('عريف',(SELECT id FROM srt),3),('وكيل رقيب',(SELECT id FROM srt),4),('رقيب',(SELECT id FROM srt),5),('رقيب أول',(SELECT id FROM srt),6),('مساعد',(SELECT id FROM srt),7),('مساعد أول',(SELECT id FROM srt),8),('ملازم',(SELECT id FROM rt),9),('ملازم أول',(SELECT id FROM rt),10),('نقيب',(SELECT id FROM rt),11),('رائد',(SELECT id from rt),12),('مقدم',(SELECT id from rt),13),('عقيد',(SELECT id from rt),14)) AS v WHERE NOT EXISTS(SELECT 1 FROM ranks)"));
+    await safe('specialties', () => db.query("INSERT INTO specialties(name,weapon_id)SELECT 'قناص',(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons) ON CONFLICT DO NOTHING"));
+    await safe('soldiers', () => db.query("INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id)SELECT 'جندي تجريبي','12345',(SELECT id FROM ranks WHERE name='جندي' LIMIT 1),(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1),(SELECT id FROM specialties LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons) AND NOT EXISTS(SELECT 1 FROM soldiers WHERE military_id='12345')"));
+    await safe('exams', () => db.query("INSERT INTO exams(section_key,title)SELECT 'fitness','اختبار تجريبي' WHERE EXISTS(SELECT 1 FROM weapons) AND NOT EXISTS(SELECT 1 FROM exams)"));
+    await safe('announcements', () => db.query("INSERT INTO announcements(title,content,priority,created_by)SELECT 'مرحباً','المنصة جاهزة للعمل','info',(SELECT id FROM users WHERE role='commander' LIMIT 1) WHERE NOT EXISTS(SELECT 1 FROM announcements)"));
+    res.json({ message: "✅ تم إضافة بيانات تجريبية", results });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, results });
   }
 });
 
