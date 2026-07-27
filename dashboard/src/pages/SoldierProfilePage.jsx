@@ -33,8 +33,11 @@ export default function SoldierProfilePage({ user, onRefresh }) {
   const [evalForm, setEvalForm] = useState({ section_key: 'general', score: '', notes: '' });
   const [evalLoading, setEvalLoading] = useState(false);
   const [leaves, setLeaves] = useState([]);
+  const [testSessions, setTestSessions] = useState([]);
+  const [testLoaded, setTestLoaded] = useState(false);
+  const [testLoading, setTestLoading] = useState(false);
 
-  useEffect(() => { loadSoldier(); }, [id]);
+  useEffect(() => { loadSoldier(); setTestLoaded(false); setTestSessions([]); }, [id]);
 
   async function loadSoldier() {
     setLoading(true);
@@ -69,6 +72,22 @@ export default function SoldierProfilePage({ user, onRefresh }) {
       await loadSoldier();
       if (onRefresh) onRefresh();
     } catch (err) { alert(err.message); }
+  }
+
+  async function loadTestResults() {
+    if (testLoaded) return;
+    setTestLoading(true);
+    try {
+      const data = await api.getSoldierAssessments(id);
+      setTestSessions(data.sessions || []);
+      setTestLoaded(true);
+    } catch (e) { console.error(e); }
+    setTestLoading(false);
+  }
+
+  function handleTabClick(tab) {
+    setActiveTab(tab);
+    if (tab === 'test-results') loadTestResults();
   }
 
   if (loading) return <div className="text-center p-5 text-muted-military">جاري التحميل...</div>;
@@ -149,7 +168,7 @@ export default function SoldierProfilePage({ user, onRefresh }) {
       <ul className="nav nav-tabs mb-3">
         <li className="nav-item">
           <button className={`nav-link ${activeTab === 'overview' ? 'active' : ''}`}
-            onClick={() => setActiveTab('overview')}
+            onClick={() => handleTabClick('overview')}
             style={{ color: activeTab === 'overview' ? 'var(--military-gold-bright)' : 'var(--military-text-muted)' }}>
             نظرة عامة
           </button>
@@ -157,7 +176,7 @@ export default function SoldierProfilePage({ user, onRefresh }) {
         {SECTION_KEYS.map(sk => (
           <li key={sk} className="nav-item">
             <button className={`nav-link ${activeTab === sk ? 'active' : ''}`}
-              onClick={() => setActiveTab(sk)}
+              onClick={() => handleTabClick(sk)}
               style={{ color: activeTab === sk ? 'var(--military-gold-bright)' : 'var(--military-text-muted)' }}>
               {SECTION_NAMES[sk]}
             </button>
@@ -165,16 +184,23 @@ export default function SoldierProfilePage({ user, onRefresh }) {
         ))}
         <li className="nav-item">
           <button className={`nav-link ${activeTab === 'distinctions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('distinctions')}
+            onClick={() => handleTabClick('distinctions')}
             style={{ color: activeTab === 'distinctions' ? 'var(--military-gold-bright)' : 'var(--military-text-muted)' }}>
             التمييزات
           </button>
         </li>
         <li className="nav-item">
           <button className={`nav-link ${activeTab === 'punishments' ? 'active' : ''}`}
-            onClick={() => setActiveTab('punishments')}
+            onClick={() => handleTabClick('punishments')}
             style={{ color: activeTab === 'punishments' ? 'var(--military-gold-bright)' : 'var(--military-text-muted)' }}>
             الجزاءات
+          </button>
+        </li>
+        <li className="nav-item">
+          <button className={`nav-link ${activeTab === 'test-results' ? 'active' : ''}`}
+            onClick={() => handleTabClick('test-results')}
+            style={{ color: activeTab === 'test-results' ? 'var(--military-gold-bright)' : 'var(--military-text-muted)' }}>
+            نتائج الاختبارات
           </button>
         </li>
       </ul>
@@ -454,6 +480,69 @@ export default function SoldierProfilePage({ user, onRefresh }) {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* Test Results Tab */}
+      {activeTab === 'test-results' && (
+        <div>
+          <h5 className="text-gold mb-3">نتائج الاختبارات</h5>
+          {testLoading ? (
+            <div className="text-center p-4 text-muted-military">جاري التحميل...</div>
+          ) : testSessions.length === 0 ? (
+            <div className="text-center p-4 text-muted-military">لا توجد نتائج اختبارات مسجلة لهذا الفرد</div>
+          ) : (() => {
+            const SESSION_TYPE_NAMES = { cabin: 'كابينة', theory: 'نظري', fitness: 'لياقة' };
+            const SESSION_TYPE_COLORS = { cabin: '#FFD700', theory: '#2196F3', fitness: '#4CAF50' };
+            const grouped = {};
+            testSessions.forEach(s => {
+              const t = s.session_type;
+              if (!grouped[t]) grouped[t] = [];
+              grouped[t].push(s);
+            });
+            return Object.entries(grouped).map(([type, sessions]) => (
+              <div key={type} className="mb-4">
+                <div className="d-flex align-items-center gap-2 mb-2">
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: SESSION_TYPE_COLORS[type] || '#888' }} />
+                  <h6 className="text-gold mb-0">{SESSION_TYPE_NAMES[type] || type}</h6>
+                  <span className="badge bg-dark border border-military">{sessions.length} اختبار</span>
+                </div>
+                <div className="table-responsive">
+                  <table className="table table-sm table-hover border-military">
+                    <thead>
+                      <tr className="text-gold small">
+                        <th>#</th>
+                        <th>التاريخ</th>
+                        <th>التفاصيل</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sessions.map((s, idx) => (
+                        <tr key={s.id}>
+                          <td className="small text-muted-military">{idx + 1}</td>
+                          <td className="small">
+                            {s.assessment_date ? new Date(s.assessment_date).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' }) : '-'}
+                          </td>
+                          <td>
+                            <div className="d-flex flex-wrap gap-2">
+                              {Object.entries(s.values || {}).map(([key, val]) => (
+                                <span key={key} className="badge bg-dark border border-military">
+                                  {key}: <span className="text-gold">{val}</span>
+                                </span>
+                              ))}
+                              {Object.keys(s.values || {}).length === 0 && (
+                                <span className="small text-muted-military">—</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       )}
     </div>
