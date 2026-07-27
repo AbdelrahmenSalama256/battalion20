@@ -3116,14 +3116,11 @@ app.use((err, req, res, next) => {
 });
 
 module.exports = app;
+// Run migrations on module load (Vercel cold start) — all statements use IF NOT EXISTS
+runMigrations().catch(e => console.error("Migration error:", e.message));
 if (typeof process.env.VERCEL === "undefined") {
   const port = process.env.PORT || 3001;
   app.listen(port, async () => {
     console.log(`API running on http://localhost:${port}`);
-    try {
-      await runMigrations();
-    } catch (e) {
-      console.error("Migration error:", e.message);
-    }
   });
 }
