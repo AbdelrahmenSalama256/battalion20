@@ -90,6 +90,8 @@ async function runMigrations() {
   } catch (e) {}
   await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS last_leave_end DATE");
   await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS enlistment_date DATE");
+  await pool.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS temp_id VARCHAR(50)");
+  try { await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_soldiers_temp_id ON soldiers(temp_id) WHERE temp_id IS NOT NULL"); } catch(e){}
   await pool.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS focus_points TEXT[] DEFAULT '{}'");
   await pool.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS max_score NUMERIC(5,2) DEFAULT 100");
   await pool.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS notes TEXT");
@@ -2710,15 +2712,19 @@ app.get("/api/import-logs", auth, commanderOnly, async (req, res) => {
 });
 
 // ============================================================
-// TEST RESULTS IMPORT — Parse file + fuzzy name matching + review flow
+// TEST RESULTS IMPORT — Parse file + temp_id + intra-run dedup + fuzzy flagging
 // ============================================================
 
 /**
  * POST /api/admin/import-test-results
- * Background auto-match: exact name string match only.
- * - Saves all exact matches directly (transactional).
- * - Skips rows where: no DB soldier has the same normalized name, or more than one soldier matches.
- * - Returns {saved, skipped, skippedList}.
+ * Step 1 (review): Parse file, match against DB + intra-run temp_ids, flag fuzzy duplicates.
+ * Returns review data — does NOT save anything.  Saving happens in confirm-test-results.
+ *
+ * Match priority:
+ *   1. Exact normalized name match against existing DB soldiers
+ *   2. Exact normalized name match against temp_ids created in THIS run (intra-run merge)
+ *   3. Fuzzy ≥90% against temp_ids in this run → flagged for manual review
+ *   4. Create new temp_id record
  */
 app.post("/api/admin/import-test-results", auth, commanderOnly, upload.single("workbook"), async (req, res) => {
   try {
@@ -2737,13 +2743,16 @@ app.post("/api/admin/import-test-results", auth, commanderOnly, upload.single("w
       });
     }
 
-    // Fetch all soldiers
+    const { normalizeArabic } = require("./name-matcher");
+    const stringSimilarity = require("string-similarity");
+    const crypto = require("crypto");
+
+    // Fetch all existing soldiers (including temp_id)
     const { rows: soldiers } = await pool.query(
-      "SELECT s.id, s.name, r.name as rank_name FROM soldiers s LEFT JOIN ranks r ON s.rank_id = r.id"
+      "SELECT s.id, s.name, s.military_id, s.temp_id, r.name as rank_name FROM soldiers s LEFT JOIN ranks r ON s.rank_id = r.id"
     );
 
-    // Build normalized name → soldier(s) lookup
-    const { normalizeArabic } = require("./name-matcher");
+    // Build normalized name → soldier(s) lookup for existing DB
     const normMap = new Map();
     for (const s of soldiers) {
       const key = normalizeArabic(s.name);
@@ -2752,108 +2761,113 @@ app.post("/api/admin/import-test-results", auth, commanderOnly, upload.single("w
       normMap.get(key).push(s);
     }
 
-    const saved = [];
-    const skipped = [];
+    // Track temp_ids created during this import run
+    const runTempIds = new Map(); // normName → { temp_id, name }
+
+    const results = [];
+    const stats = { matchedExisting: 0, intraRunMerged: 0, fuzzyFlagged: 0, newTempIds: 0, noMatch: 0 };
 
     for (const r of parseResult.results) {
       const normName = normalizeArabic(r.name);
       if (!normName) {
-        skipped.push({ name: r.name, reason: "اسم فارغ" });
+        results.push({ ...r, match_status: "no_match", reason: "اسم فارغ" });
+        stats.noMatch++;
         continue;
       }
-      const matches = normMap.get(normName) || [];
-      if (matches.length === 0) {
-        skipped.push({ name: r.name, reason: "لا يوجد مطابق في قاعدة البيانات" });
-      } else if (matches.length > 1) {
-        skipped.push({ name: r.name, reason: `يوجد ${matches.length} أسماء مطابقة: ${matches.map(m => m.name).join(", ")}` });
-      } else {
-        saved.push({ ...r, soldier_id: matches[0].id, soldier_name: matches[0].name });
+
+      // 1. Exact match against existing DB soldiers
+      const dbMatches = normMap.get(normName) || [];
+      if (dbMatches.length === 1) {
+        const soldier = dbMatches[0];
+        results.push({
+          ...r,
+          match_status: "existing",
+          soldier_id: soldier.id,
+          soldier_name: soldier.name,
+          soldier_military_id: soldier.military_id,
+          soldier_temp_id: soldier.temp_id,
+          detected_specialty: r.detected_specialty || null,
+          detected_color_hex: r.detected_color_hex || null,
+        });
+        stats.matchedExisting++;
+        continue;
       }
-    }
+      if (dbMatches.length > 1) {
+        results.push({
+          ...r,
+          match_status: "ambiguous",
+          reason: `يوجد ${dbMatches.length} أسماء مطابقة: ${dbMatches.map(m => m.name).join(", ")}`,
+          detected_specialty: r.detected_specialty || null,
+          detected_color_hex: r.detected_color_hex || null,
+        });
+        stats.noMatch++;
+        continue;
+      }
 
-    // Save confirmed matches in a transaction
-    let sessionsInserted = 0;
-    let valuesInserted = 0;
+      // 2. Exact match against temp_ids created in THIS run
+      if (runTempIds.has(normName)) {
+        const existing = runTempIds.get(normName);
+        results.push({
+          ...r,
+          match_status: "intra_run_merge",
+          temp_id: existing.temp_id,
+          detected_specialty: r.detected_specialty || null,
+          detected_color_hex: r.detected_color_hex || null,
+        });
+        stats.intraRunMerged++;
+        continue;
+      }
 
-    if (saved.length > 0) {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        for (const r of saved) {
-          // Upsert session (unique on soldier_id + type + date)
-          let sessResult = await client.query(
-            "SELECT id FROM assessment_sessions WHERE soldier_id=$1 AND session_type=$2 AND assessment_date=$3",
-            [r.soldier_id, r.test_type, r.test_date]
-          );
-
-          let sessionId;
-          if (sessResult.rows.length > 0) {
-            sessionId = sessResult.rows[0].id;
-            await client.query(
-              "UPDATE assessment_sessions SET worksheet_name=$1, workbook_filename=$2, imported_by=$3, updated_at=NOW() WHERE id=$4",
-              [`${r.test_type}_results`, "test-results-auto", req.user.id, sessionId]
-            );
-            await client.query("DELETE FROM assessment_values WHERE session_id=$1", [sessionId]);
-          } else {
-            sessResult = await client.query(
-              "INSERT INTO assessment_sessions(soldier_id, session_type, assessment_date, worksheet_name, workbook_filename, imported_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
-              [r.soldier_id, r.test_type, r.test_date, `${r.test_type}_results`, "test-results-auto", req.user.id]
-            );
-            sessionId = sessResult.rows[0].id;
-            sessionsInserted++;
-          }
-
-          // Insert field values
-          for (const [key, value] of Object.entries(r.score_details)) {
-            if (value === null || value === undefined) continue;
-            if (typeof value === "number") {
-              await client.query(
-                "INSERT INTO assessment_values(session_id, field_key, numeric_value) VALUES($1, $2, $3)",
-                [sessionId, key, value]
-              );
-            } else {
-              await client.query(
-                "INSERT INTO assessment_values(session_id, field_key, text_value) VALUES($1, $2, $3)",
-                [sessionId, key, String(value)]
-              );
-            }
-            valuesInserted++;
-          }
+      // 3. Fuzzy match ≥90% against temp_ids in this run
+      const runNames = [...runTempIds.keys()];
+      if (runNames.length > 0) {
+        const bestMatch = stringSimilarity.findBestMatch(normName, runNames);
+        const bestRating = bestMatch.bestMatch.rating;
+        if (bestRating >= 0.90) {
+          const bestRunName = bestMatch.bestMatch.target;
+          const matched = runTempIds.get(bestRunName);
+          results.push({
+            ...r,
+            match_status: "fuzzy_flagged",
+            fuzzy_candidate: {
+              name: matched.name,
+              temp_id: matched.temp_id,
+              similarity: Math.round(bestRating * 1000) / 10,
+            },
+            detected_specialty: r.detected_specialty || null,
+            detected_color_hex: r.detected_color_hex || null,
+          });
+          stats.fuzzyFlagged++;
+          continue;
         }
-        await client.query("COMMIT");
-      } catch (txError) {
-        await client.query("ROLLBACK");
-        throw txError;
-      } finally {
-        client.release();
       }
-    }
 
-    // Log the import
-    try {
-      await pool.query(
-        "INSERT INTO import_logs(filename, imported_by, imported_by_name, worksheets_detected, sessions_detected, sessions_inserted, sessions_updated, employees_detected, date_groups_detected, validation_errors, processing_time_ms, status, error_details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-        [
-          req.file.originalname || "test-results-auto", req.user.id, req.user.name || "commander",
-          parseResult.sheets.length, saved.length, sessionsInserted, 0,
-          saved.length, 0, skipped.length, 0, "success",
-          JSON.stringify(skipped.slice(0, 50)),
-        ]
-      );
-    } catch (e) { /* non-fatal */ }
+      // 4. Create new temp_id
+      const tempId = "TMP-" + crypto.randomBytes(4).toString("hex").toUpperCase();
+      runTempIds.set(normName, { temp_id: tempId, name: r.name });
+      results.push({
+        ...r,
+        match_status: "new",
+        temp_id: tempId,
+        detected_specialty: r.detected_specialty || null,
+        detected_color_hex: r.detected_color_hex || null,
+      });
+      stats.newTempIds++;
+    }
 
     res.json({
       success: true,
       summary: {
         totalParsed: parseResult.totalCount,
-        saved: saved.length,
-        skipped: skipped.length,
+        matchedExisting: stats.matchedExisting,
+        intraRunMerged: stats.intraRunMerged,
+        fuzzyFlagged: stats.fuzzyFlagged,
+        newTempIds: stats.newTempIds,
+        noMatch: stats.noMatch,
         sheetsDetected: parseResult.sheets.length,
-        sessionsInserted,
-        valuesInserted,
       },
+      results,
       sheets: parseResult.sheets,
-      skippedList: skipped,
       warnings: parseResult.warnings,
       errors: parseResult.errors,
     });
@@ -2865,61 +2879,160 @@ app.post("/api/admin/import-test-results", auth, commanderOnly, upload.single("w
 
 /**
  * POST /api/admin/confirm-test-results
- * Step 2: Receive confirmed matches and save to assessment_sessions + assessment_values.
- * The body contains:
- *   - results: array of { soldier_id, test_date, test_type, score_details, rank_from_file }
+ * Step 2: Receive confirmed review data and save to DB.
  *
- * This runs in a transaction. If any error occurs, rolls back everything.
+ * Body: { results: [...], merges?: [...], specialty_confirmations?: [...] }
+ *
+ * Each result has:
+ *   - match_status: "existing" | "new" | "intra_run_merge" | "fuzzy_flagged" (merged)
+ *   - soldier_id: for existing matches
+ *   - temp_id: for new / intra_run_merge
+ *   - name, rank_from_file, test_date, test_type, score_details
+ *   - detected_specialty: from color extraction (optional)
+ *
+ * merges: array of { source_name, target_temp_id } — user confirmed fuzzy merge
+ * specialty_confirmations: array of { soldier_id | temp_id, specialty } — user accepted/edited
  */
 app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res) => {
   try {
-    const { results } = req.body;
+    const { results, merges, specialty_confirmations } = req.body;
     if (!results || !results.length) {
       return res.status(400).json({ error: "لا توجد نتائج للحفظ" });
     }
 
-    // Validate all soldier_ids exist
-    const soldierIds = [...new Set(results.map(r => r.soldier_id).filter(Boolean))];
-    if (soldierIds.length === 0) {
-      return res.status(400).json({ error: "لا توجد معرفات أفراد صالحة" });
+    const crypto = require("crypto");
+
+    // Build merge map: source_name → target_temp_id
+    const mergeMap = new Map();
+    if (merges && merges.length) {
+      for (const m of merges) {
+        if (m.source_name && m.target_temp_id) {
+          mergeMap.set(normalizeArabic(m.source_name), m.target_temp_id);
+        }
+      }
     }
 
-    const { rows: validSoldiers } = await pool.query(
-      "SELECT id FROM soldiers WHERE id = ANY($1::uuid[])",
-      [soldierIds]
-    );
-    const validIds = new Set(validSoldiers.map(s => s.id));
-    const invalidIds = soldierIds.filter(id => !validIds.has(id));
+    // Build specialty map
+    const specialtyMap = new Map();
+    if (specialty_confirmations && specialty_confirmations.length) {
+      for (const sc of specialty_confirmations) {
+        const key = sc.soldier_id || sc.temp_id;
+        if (key && sc.specialty) specialtyMap.set(key, sc.specialty);
+      }
+    }
 
-    if (invalidIds.length > 0) {
-      return res.status(400).json({
-        error: `${invalidIds.length} معرفات أفراد غير صالحة`,
-        invalidIds,
-      });
+    const { normalizeArabic } = require("./name-matcher");
+
+    // Collect unique temp_ids that need new soldier records
+    const tempIdSoldiers = new Map(); // temp_id → { name, rank_from_file, detected_specialty }
+    for (const r of results) {
+      if (r.match_status === "new" && r.temp_id) {
+        if (!tempIdSoldiers.has(r.temp_id)) {
+          tempIdSoldiers.set(r.temp_id, {
+            name: r.name,
+            rank_from_file: r.rank_from_file,
+            detected_specialty: r.detected_specialty,
+          });
+        }
+      }
+      // Handle fuzzy_flagged that user chose to merge
+      if (r.match_status === "fuzzy_flagged" && r.temp_id) {
+        if (!tempIdSoldiers.has(r.temp_id)) {
+          tempIdSoldiers.set(r.temp_id, {
+            name: r.name,
+            rank_from_file: r.rank_from_file,
+            detected_specialty: r.detected_specialty,
+          });
+        }
+      }
     }
 
     let sessionsInserted = 0;
     let sessionsUpdated = 0;
     let valuesInserted = 0;
+    let soldiersCreated = 0;
     const errors = [];
+    const createdSoldiers = []; // { temp_id, soldier_id, name }
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
+      // Create temp_id soldier records
+      for (const [tempId, info] of tempIdSoldiers) {
+        try {
+          // Resolve rank_id from rank name
+          let rankId = null;
+          if (info.rank_from_file) {
+            const rankRes = await client.query("SELECT id FROM ranks WHERE name = $1 LIMIT 1", [info.rank_from_file]);
+            if (rankRes.rows.length > 0) rankId = rankRes.rows[0].id;
+          }
+
+          const specialty = specialtyMap.get(tempId) || info.detected_specialty || null;
+          const insRes = await client.query(
+            "INSERT INTO soldiers(name, temp_id, rank_id, specific_specialty) VALUES($1, $2, $3, $4) RETURNING id, temp_id, name",
+            [info.name, tempId, rankId, specialty]
+          );
+          createdSoldiers.push({ temp_id: tempId, soldier_id: insRes.rows[0].id, name: info.name });
+          soldiersCreated++;
+        } catch (e) {
+          errors.push({ temp_id: tempId, error: e.message });
+        }
+      }
+
+      // Build temp_id → soldier_id lookup (both newly created and pre-existing)
+      const tempIdToSoldierId = new Map();
+      for (const cs of createdSoldiers) {
+        tempIdToSoldierId.set(cs.temp_id, cs.soldier_id);
+      }
+      // Also look up existing soldiers that already have temp_ids
+      const allTempIds = [...tempIdSoldiers.keys()];
+      if (allTempIds.length > 0) {
+        const existingRes = await client.query(
+          "SELECT id, temp_id FROM soldiers WHERE temp_id = ANY($1::text[])",
+          [allTempIds]
+        );
+        for (const row of existingRes.rows) {
+          if (!tempIdToSoldierId.has(row.temp_id)) {
+            tempIdToSoldierId.set(row.temp_id, row.id);
+          }
+        }
+      }
+
+      // Apply specialty confirmations to existing soldiers
+      for (const sc of (specialty_confirmations || [])) {
+        if (sc.soldier_id && sc.specialty) {
+          try {
+            await client.query("UPDATE soldiers SET specific_specialty = $1 WHERE id = $2", [sc.specialty, sc.soldier_id]);
+          } catch (e) { /* non-fatal */ }
+        }
+      }
+
+      // Save assessment sessions + values
       for (const result of results) {
         try {
-          const { soldier_id, test_date, test_type, score_details, rank_from_file } = result;
+          // Resolve soldier_id
+          let soldierId = result.soldier_id || null;
+          if (!soldierId && result.temp_id) {
+            soldierId = tempIdToSoldierId.get(result.temp_id);
+          }
 
-          if (!soldier_id || !test_date || !test_type || !score_details) {
-            errors.push({ soldier_id, error: "بيانات ناقصة" });
+          // Handle merge: fuzzy_flagged results that user confirmed to merge
+          if (result.match_status === "fuzzy_flagged" && result.fuzzy_candidate) {
+            const fuzzyNorm = normalizeArabic(result.fuzzy_candidate.name);
+            const targetTempId = mergeMap.get(fuzzyNorm) || result.fuzzy_candidate.temp_id;
+            soldierId = tempIdToSoldierId.get(targetTempId) || soldierId;
+          }
+
+          if (!soldierId || !result.test_date || !result.test_type || !result.score_details) {
+            errors.push({ name: result.name, error: "بيانات ناقصة — لا يمكن الحفظ" });
             continue;
           }
 
           // Upsert session (unique on soldier_id + type + date)
           let sessResult = await client.query(
             "SELECT id FROM assessment_sessions WHERE soldier_id=$1 AND session_type=$2 AND assessment_date=$3",
-            [soldier_id, test_type, test_date]
+            [soldierId, result.test_type, result.test_date]
           );
 
           let sessionId;
@@ -2927,21 +3040,20 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
             sessionId = sessResult.rows[0].id;
             await client.query(
               "UPDATE assessment_sessions SET worksheet_name=$1, workbook_filename=$2, imported_by=$3, updated_at=NOW() WHERE id=$4",
-              [`${test_type}_results`, "test-results-upload", req.user.id, sessionId]
+              [`${result.test_type}_results`, "test-results-import", req.user.id, sessionId]
             );
             await client.query("DELETE FROM assessment_values WHERE session_id=$1", [sessionId]);
             sessionsUpdated++;
           } else {
             sessResult = await client.query(
               "INSERT INTO assessment_sessions(soldier_id, session_type, assessment_date, worksheet_name, workbook_filename, imported_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
-              [soldier_id, test_type, test_date, `${test_type}_results`, "test-results-upload", req.user.id]
+              [soldierId, result.test_type, result.test_date, `${result.test_type}_results`, "test-results-import", req.user.id]
             );
             sessionId = sessResult.rows[0].id;
             sessionsInserted++;
           }
 
-          // Insert field values
-          for (const [key, value] of Object.entries(score_details)) {
+          for (const [key, value] of Object.entries(result.score_details)) {
             if (value === null || value === undefined) continue;
             if (typeof value === "number") {
               await client.query(
@@ -2957,7 +3069,7 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
             valuesInserted++;
           }
         } catch (e) {
-          errors.push({ soldier_id: result.soldier_id, error: e.message });
+          errors.push({ name: result.name, error: e.message });
         }
       }
 
@@ -2969,27 +3081,28 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
       client.release();
     }
 
-    // Log the import
+    // Log
     try {
       await pool.query(
         "INSERT INTO import_logs(filename, imported_by, imported_by_name, worksheets_detected, sessions_detected, sessions_inserted, sessions_updated, employees_detected, date_groups_detected, validation_errors, processing_time_ms, status, error_details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
         [
-          "test-results-upload", req.user.id, req.user.name || "commander",
-          3, results.length, sessionsInserted, sessionsUpdated,
-          soldierIds.length, results.length, errors.length, 0, "success",
-          JSON.stringify(errors),
+          "test-results-import", req.user.id, req.user.name || "commander",
+          0, results.length, sessionsInserted, sessionsUpdated,
+          soldiersCreated, 0, errors.length, 0, "success",
+          JSON.stringify(errors.slice(0, 50)),
         ]
       );
     } catch (e) { /* non-fatal */ }
 
     res.json({
       success: true,
-      message: `تم حفظ ${sessionsInserted} جلسة جديدة وتحديث ${sessionsUpdated} جلسة موجودة`,
+      message: `تم حفظ ${sessionsInserted} جلسة جديدة وتحديث ${sessionsUpdated} جلسة موجودة وإنشاء ${soldiersCreated} فرد جديد`,
+      soldiersCreated,
+      createdSoldiers,
       sessionsInserted,
       sessionsUpdated,
       valuesInserted,
       errors,
-      invalidIds,
     });
   } catch (e) {
     console.error("confirm-test-results error:", e);

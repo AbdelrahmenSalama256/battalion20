@@ -19,6 +19,50 @@
 const ExcelJS = require("exceljs");
 
 // ============================================================
+// COLOR → SPECIALTY MAPPING (per sheet, separate legends)
+// ============================================================
+
+const SPECIALTY_COLORS = {
+  theory: {
+    "FFFF0000": "موجهين",
+    "FF00B050": "مركبات",
+    "FF00B0F0": "إشارة",
+    "FFFFFF00": "إستطلاع",
+  },
+  fitness: {
+    "FFFF0000": "عمال توجيه",
+    "FFFFC000": "إستطلاع",
+    "FF00B0F0": "إشارة",
+    "FF00B050": "سائقين",
+  },
+};
+
+/**
+ * Extract fill color from a cell and map to specialty.
+ * Returns { specialty, colorHex, unknown }
+ */
+function extractSpecialtyFromCell(cell, sheetType) {
+  const colorMap = SPECIALTY_COLORS[sheetType];
+  if (!colorMap) return { specialty: null, colorHex: null, unknown: false };
+
+  const fill = cell && cell.fill;
+  if (!fill || fill.type !== "pattern") {
+    if (sheetType === "theory") return { specialty: "تخصصات أخرى", colorHex: null, unknown: false };
+    return { specialty: null, colorHex: null, unknown: false };
+  }
+
+  const fgColor = fill.fgColor;
+  if (!fgColor || !fgColor.argb) {
+    if (sheetType === "theory") return { specialty: "تخصصات أخرى", colorHex: null, unknown: false };
+    return { specialty: null, colorHex: null, unknown: false };
+  }
+
+  const color = fgColor.argb.toUpperCase();
+  if (colorMap[color]) return { specialty: colorMap[color], colorHex: color, unknown: false };
+  return { specialty: null, colorHex: color, unknown: true };
+}
+
+// ============================================================
 // HELPERS
 // ============================================================
 
@@ -316,6 +360,11 @@ function parseTheorySheet(worksheet) {
     const name = toStr(cellVal(worksheet.getCell(r, 3)));
     if (!name) continue;
 
+    // Extract specialty from cell fill color (name cell col C, fallback rank cell col B)
+    const nameColor = extractSpecialtyFromCell(worksheet.getCell(r, 3), "theory");
+    const rankColor = extractSpecialtyFromCell(worksheet.getCell(r, 2), "theory");
+    const colorInfo = nameColor.colorHex ? nameColor : rankColor;
+
     for (const dg of dateGroups) {
       const scoreRaw = toNum(cellVal(worksheet.getCell(r, dg.startCol)));
       const notesRaw = cellVal(worksheet.getCell(r, dg.startCol + 1));
@@ -334,6 +383,8 @@ function parseTheorySheet(worksheet) {
         test_date_raw: dg.dateLabel,
         test_type: "theory",
         score_details: scoreDetails,
+        detected_specialty: colorInfo.specialty,
+        detected_color_hex: colorInfo.colorHex,
         _serial: serial,
       });
     }
@@ -394,6 +445,11 @@ function parseFitnessSheet(worksheet) {
     const name = toStr(cellVal(worksheet.getCell(r, 3)));
     if (!name) continue;
 
+    // Extract specialty from cell fill color (name cell col C, fallback rank cell col B)
+    const nameColor = extractSpecialtyFromCell(worksheet.getCell(r, 3), "fitness");
+    const rankColor = extractSpecialtyFromCell(worksheet.getCell(r, 2), "fitness");
+    const colorInfo = nameColor.colorHex ? nameColor : rankColor;
+
     for (const dg of dateGroups) {
       const blockValues = [];
       for (let c = dg.startCol; c <= dg.endCol; c++) {
@@ -417,6 +473,8 @@ function parseFitnessSheet(worksheet) {
         test_date_raw: dg.dateLabel,
         test_type: "fitness",
         score_details: scoreDetails,
+        detected_specialty: colorInfo.specialty,
+        detected_color_hex: colorInfo.colorHex,
         _serial: serial,
       });
     }
@@ -538,4 +596,4 @@ async function parseTestResults(buffer) {
   };
 }
 
-module.exports = { parseTestResults, detectSheetType };
+module.exports = { parseTestResults, detectSheetType, SPECIALTY_COLORS, extractSpecialtyFromCell };
