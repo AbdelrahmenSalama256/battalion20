@@ -7,6 +7,10 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const PDFDocument = require("pdfkit");
 const path = require("path");
+const multer = require("multer");
+const { WorkbookImportEngine } = require("./workbook-parser");
+const { parseTestResults } = require("./test-results-parser");
+const { classifyMatches } = require("./name-matcher");
 
 const DB_URL = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0] : undefined;
 const isLocal = DB_URL && DB_URL.includes("localhost");
@@ -102,6 +106,14 @@ async function runMigrations() {
   try { await pool.query("CREATE INDEX IF NOT EXISTS idx_exam_items_exam_id ON exam_items(exam_id)"); } catch (e) {}
   await pool.query("CREATE TABLE IF NOT EXISTS result_item_scores (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), result_id UUID REFERENCES results(id) ON DELETE CASCADE, item_id UUID REFERENCES exam_items(id) ON DELETE SET NULL, score NUMERIC(5,2), max_score NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
   await pool.query("CREATE TABLE IF NOT EXISTS fitness_results (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, exercise_id UUID, score_value NUMERIC(5,2), score_percent NUMERIC(5,2), created_at TIMESTAMPTZ DEFAULT NOW())");
+  // 010: Workbook-driven assessment system
+  await pool.query("CREATE TABLE IF NOT EXISTS assessment_sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), soldier_id UUID REFERENCES soldiers(id) ON DELETE CASCADE, session_type VARCHAR(50) NOT NULL, assessment_date DATE NOT NULL, worksheet_name VARCHAR(200), workbook_filename VARCHAR(500), imported_by UUID REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())");
+  try { await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_assessment_session_unique ON assessment_sessions(soldier_id, session_type, assessment_date)"); } catch (e) {}
+  try { await pool.query("CREATE INDEX IF NOT EXISTS idx_assessment_sessions_type ON assessment_sessions(session_type)"); } catch (e) {}
+  try { await pool.query("CREATE INDEX IF NOT EXISTS idx_assessment_sessions_date ON assessment_sessions(assessment_date)"); } catch (e) {}
+  await pool.query("CREATE TABLE IF NOT EXISTS assessment_values (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id UUID REFERENCES assessment_sessions(id) ON DELETE CASCADE, field_key VARCHAR(100) NOT NULL, numeric_value NUMERIC(10,2), text_value TEXT, created_at TIMESTAMPTZ DEFAULT NOW())");
+  try { await pool.query("CREATE INDEX IF NOT EXISTS idx_assessment_values_session ON assessment_values(session_id)"); } catch (e) {}
+  await pool.query("CREATE TABLE IF NOT EXISTS import_logs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), filename VARCHAR(500), imported_by UUID REFERENCES users(id), imported_by_name VARCHAR(150), worksheets_detected INT DEFAULT 0, sessions_detected INT DEFAULT 0, sessions_inserted INT DEFAULT 0, sessions_updated INT DEFAULT 0, employees_detected INT DEFAULT 0, date_groups_detected INT DEFAULT 0, validation_errors INT DEFAULT 0, processing_time_ms INT DEFAULT 0, status VARCHAR(20) DEFAULT 'success', error_details JSONB DEFAULT '[]', created_at TIMESTAMPTZ DEFAULT NOW())");
   console.log("Migrations done");
 }
 
@@ -186,6 +198,19 @@ app.use((req, res, next) => {
     req.url = "/api" + req.url.substring("/.netlify/functions/api".length);
   if (!req.path.startsWith("/api")) req.url = "/api" + req.url;
   next();
+});
+
+// Multer config for workbook uploads (in-memory, 20MB limit)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || file.originalname.endsWith(".xlsx")) {
+      cb(null, true);
+    } else {
+      cb(new Error("يجب رفع ملف .xlsx فقط"), false);
+    }
+  },
 });
 
 app.get("/api/health", (req, res) =>
@@ -2308,6 +2333,666 @@ app.patch("/api/soldiers/:id/confirm-return", auth, commanderOnly, async (req, r
     ).catch(() => {});
     res.json(rows[0]);
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// WORKBOOK IMPORT ENGINE — Server-side Excel parsing + import
+// ============================================================
+
+app.post("/api/admin/import-workbook", auth, commanderOnly, upload.single("workbook"), async (req, res) => {
+  const startTime = Date.now();
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "يجب رفع ملف Excel (.xlsx)" });
+    }
+
+    const filename = req.file.originalname || "unknown.xlsx";
+    const buffer = req.file.buffer;
+
+    // Step 1: Parse workbook
+    const engine = new WorkbookImportEngine();
+    const parseResult = await engine.parse(buffer, filename);
+
+    // Check for validation errors
+    const criticalErrors = parseResult.errors.filter((e) => e.category === "VALIDATION");
+    if (criticalErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "أخطاء في هيكل الملف",
+        errors: parseResult.errors,
+        processingTime: Date.now() - startTime,
+      });
+    }
+
+    // Step2: Map to database
+    const log = {
+      weapons: 0, ranks: 0, specialties: 0,
+      soldiersInserted: 0, soldiersUpdated: 0,
+      sessionsInserted: 0, sessionsUpdated: 0,
+      employeesDetected: 0, dateGroupsDetected: 0,
+      worksheetsDetected: parseResult.analysis.worksheets.length,
+      errors: [], warnings: parseResult.validation.warnings || [],
+    };
+
+    // Collect unique employees across all worksheets
+    const employeeMap = {}; // serial -> { name, rank, soldierId }
+    const allSessions = parseResult.sessions;
+
+    for (const session of allSessions) {
+      log.employeesDetected++;
+      const serial = session.employeeSerial;
+      if (serial && !employeeMap[serial]) {
+        employeeMap[serial] = {
+          name: session.employeeName,
+          rank: session.employeeRank,
+          soldierId: null,
+        };
+      }
+      log.dateGroupsDetected++;
+    }
+
+    // Transaction: map employees → soldiers, insert sessions
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Ensure soldiers exist for each employee
+      for (const [serial, emp] of Object.entries(employeeMap)) {
+        if (!serial || !emp.name) continue;
+
+        // Check if soldier exists by military_id
+        let existing = await client.query(
+          "SELECT id FROM soldiers WHERE military_id = $1",
+          [serial]
+        );
+
+        if (existing.rows.length > 0) {
+          emp.soldierId = existing.rows[0].id;
+          log.soldiersUpdated++;
+        } else {
+          // Find or create rank
+          let rankId = null;
+          if (emp.rank) {
+            let r = await client.query("SELECT id FROM ranks WHERE name = $1", [emp.rank]);
+            if (r.rows.length === 0) {
+              r = await client.query("INSERT INTO ranks(name, sort_order) VALUES($1, 0) RETURNING id", [emp.rank]);
+              log.ranks++;
+            }
+            rankId = r.rows[0].id;
+          }
+
+          const r = await client.query(
+            "INSERT INTO soldiers(name, military_id, rank_id, status) VALUES($1, $2, $3, 'active') RETURNING id",
+            [emp.name, serial, rankId]
+          );
+          emp.soldierId = r.rows[0].id;
+          log.soldiersInserted++;
+        }
+      }
+
+      // Insert assessment sessions (upsert by soldier_id + type + date)
+      for (const session of allSessions) {
+        const serial = session.employeeSerial;
+        const emp = employeeMap[serial];
+        if (!emp || !emp.soldierId) {
+          log.errors.push({
+            category: "DATABASE",
+            description: `لم يتم العثور على الجندي بالرقم ${serial}`,
+            employee: session.employeeName,
+          });
+          continue;
+        }
+
+        // Parse date
+        let assessmentDate = null;
+        if (session.date) {
+          const dateStr = String(session.date).trim();
+          // Try Excel serial date
+          const serialNum = Number(dateStr);
+          if (!isNaN(serialNum) && serialNum > 30000 && serialNum < 60000) {
+            const d = new Date((serialNum - 25569) * 86400 * 1000);
+            assessmentDate = d.toISOString().slice(0, 10);
+          } else {
+            const parsed = new Date(dateStr);
+            if (!isNaN(parsed.getTime())) {
+              assessmentDate = parsed.toISOString().slice(0, 10);
+            }
+          }
+        }
+
+        if (!assessmentDate) {
+          log.errors.push({
+            category: "DATA",
+            description: `تاريخ غير صالح "${session.date}" للموظف ${session.employeeName}`,
+          });
+          continue;
+        }
+
+        // Upsert session
+        let sessResult = await client.query(
+          "SELECT id FROM assessment_sessions WHERE soldier_id=$1 AND session_type=$2 AND assessment_date=$3",
+          [emp.soldierId, session.type, assessmentDate]
+        );
+
+        let sessionId;
+        if (sessResult.rows.length > 0) {
+          sessionId = sessResult.rows[0].id;
+          // Update existing session
+          await client.query(
+            "UPDATE assessment_sessions SET worksheet_name=$1, workbook_filename=$2, imported_by=$3, updated_at=NOW() WHERE id=$4",
+            [session.worksheetName, filename, req.user.id, sessionId]
+          );
+          // Clear old values
+          await client.query("DELETE FROM assessment_values WHERE session_id=$1", [sessionId]);
+          log.sessionsUpdated++;
+        } else {
+          sessResult = await client.query(
+            "INSERT INTO assessment_sessions(soldier_id, session_type, assessment_date, worksheet_name, workbook_filename, imported_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
+            [emp.soldierId, session.type, assessmentDate, session.worksheetName, filename, req.user.id]
+          );
+          sessionId = sessResult.rows[0].id;
+          log.sessionsInserted++;
+        }
+
+        // Insert field values
+        for (const [key, value] of Object.entries(session.fields)) {
+          if (key.startsWith("_")) continue; // Skip internal fields
+          if (value === null || value === undefined) continue;
+
+          if (typeof value === "number") {
+            await client.query(
+              "INSERT INTO assessment_values(session_id, field_key, numeric_value) VALUES($1, $2, $3)",
+              [sessionId, key, value]
+            );
+          } else {
+            await client.query(
+              "INSERT INTO assessment_values(session_id, field_key, text_value) VALUES($1, $2, $3)",
+              [sessionId, key, String(value)]
+            );
+          }
+        }
+      }
+
+      await client.query("COMMIT");
+    } catch (txError) {
+      await client.query("ROLLBACK");
+      throw txError;
+    } finally {
+      client.release();
+    }
+
+    // Write import log
+    const processingTime = Date.now() - startTime;
+    try {
+      await pool.query(
+        "INSERT INTO import_logs(filename, imported_by, imported_by_name, worksheets_detected, sessions_detected, sessions_inserted, sessions_updated, employees_detected, date_groups_detected, validation_errors, processing_time_ms, status, error_details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+        [
+          filename, req.user.id, req.user.name || "commander",
+          log.worksheetsDetected, allSessions.length,
+          log.sessionsInserted, log.sessionsUpdated,
+          Object.keys(employeeMap).length, log.dateGroupsDetected,
+          log.errors.length, processingTime, "success",
+          JSON.stringify(log.errors),
+        ]
+      );
+    } catch (e) { /* log errors are non-fatal */ }
+
+    res.json({
+      success: true,
+      message: `✅ تم استيراد ${log.sessionsInserted} جلسة تقييم لـ ${Object.keys(employeeMap).length} فرد`,
+      employeesDetected: Object.keys(employeeMap).length,
+      employeesInserted: log.soldiersInserted,
+      employeesUpdated: log.soldiersUpdated,
+      sessionsInserted: log.sessionsInserted,
+      sessionsUpdated: log.sessionsUpdated,
+      dateGroupsDetected: log.dateGroupsDetected,
+      worksheetsDetected: log.worksheetsDetected,
+      ranks: log.ranks,
+      validationErrors: log.errors.length,
+      errors: log.errors,
+      warnings: log.warnings,
+      processingTime,
+    });
+  } catch (e) {
+    res.status(500).json({
+      success: false,
+      error: e.message,
+      processingTime: Date.now() - startTime,
+    });
+  }
+});
+
+// ---- ASSESSMENT SESSIONS: list with filters ----
+app.get("/api/assessments", auth, async (req, res) => {
+  try {
+    const { type, soldier_id, date_from, date_to, page = 1, limit = 50 } = req.query;
+    let where = [];
+    let params = [];
+    let idx = 1;
+
+    if (type) { where.push(`s.session_type = $${idx++}`); params.push(type); }
+    if (soldier_id) { where.push(`s.soldier_id = $${idx++}`); params.push(soldier_id); }
+    if (date_from) { where.push(`s.assessment_date >= $${idx++}`); params.push(date_from); }
+    if (date_to) { where.push(`s.assessment_date <= $${idx++}`); params.push(date_to); }
+
+    const w = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const countResult = await pool.query(`SELECT COUNT(*) FROM assessment_sessions s ${w}`, params);
+    const total = parseInt(countResult.rows[0].count);
+
+    const { rows: sessions } = await pool.query(
+      `SELECT s.*, sol.name as soldier_name, sol.military_id as soldier_military_id,
+              r.name as soldier_rank_name, r.sort_order as soldier_rank_order
+       FROM assessment_sessions s
+       LEFT JOIN soldiers sol ON s.soldier_id = sol.id
+       LEFT JOIN ranks r ON sol.rank_id = r.id
+       ${w}
+       ORDER BY s.assessment_date DESC, sol.name
+       LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, parseInt(limit), offset]
+    );
+
+    // Fetch values for each session
+    for (const session of sessions) {
+      const { rows: values } = await pool.query(
+        "SELECT field_key, numeric_value, text_value FROM assessment_values WHERE session_id = $1",
+        [session.id]
+      );
+      session.values = {};
+      for (const v of values) {
+        session.values[v.field_key] = v.numeric_value !== null ? v.numeric_value : v.text_value;
+      }
+    }
+
+    res.json({ sessions, total, page: parseInt(page), limit: parseInt(limit) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- ASSESSMENT STATS: dashboard statistics ----
+app.get("/api/assessments/stats", auth, async (req, res) => {
+  try {
+    const { type } = req.query;
+    const typeFilter = type ? `WHERE s.session_type = $1` : "";
+    const typeParams = type ? [type] : [];
+
+    const [totalRes, byTypeRes, recentRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*) as total, COUNT(DISTINCT soldier_id) as employees, COUNT(DISTINCT assessment_date) as dates FROM assessment_sessions s ${typeFilter}`, typeParams),
+      pool.query(`SELECT session_type, COUNT(*) as count, COUNT(DISTINCT soldier_id) as employees FROM assessment_sessions GROUP BY session_type ORDER BY count DESC`),
+      pool.query(`SELECT s.*, sol.name as soldier_name, sol.military_id as soldier_military_id
+                  FROM assessment_sessions s LEFT JOIN soldiers sol ON s.soldier_id = sol.id
+                  ${typeFilter}
+                  ORDER BY s.created_at DESC LIMIT 10`, typeParams),
+    ]);
+
+    res.json({
+      total: parseInt(totalRes.rows[0].total),
+      employees: parseInt(totalRes.rows[0].employees),
+      dates: parseInt(totalRes.rows[0].dates),
+      byType: byTypeRes.rows.map(r => ({ type: r.session_type, count: parseInt(r.count), employees: parseInt(r.employees) })),
+      recent: recentRes.rows,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- ASSESSMENT BY SOLDIER: all sessions for one soldier ----
+app.get("/api/assessments/soldier/:soldierId", auth, async (req, res) => {
+  try {
+    const { soldierId } = req.params;
+    const { type } = req.query;
+    let where = ["s.soldier_id = $1"];
+    let params = [soldierId];
+    let idx = 2;
+    if (type) { where.push(`s.session_type = $${idx++}`); params.push(type); }
+
+    const { rows: sessions } = await pool.query(
+      `SELECT s.* FROM assessment_sessions s WHERE ${where.join(" AND ")} ORDER BY s.session_type, s.assessment_date DESC`,
+      params
+    );
+
+    for (const session of sessions) {
+      const { rows: values } = await pool.query(
+        "SELECT field_key, numeric_value, text_value FROM assessment_values WHERE session_id = $1",
+        [session.id]
+      );
+      session.values = {};
+      for (const v of values) {
+        session.values[v.field_key] = v.numeric_value !== null ? v.numeric_value : v.text_value;
+      }
+    }
+
+    res.json({ sessions });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- ASSESSMENT DELETE ----
+app.delete("/api/assessments/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query("DELETE FROM assessment_sessions WHERE id=$1 RETURNING id", [id]);
+    if (!rows.length) return res.status(404).json({ error: "غير موجود" });
+    res.json({ deleted: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- ASSESSMENT BULK DELETE ----
+app.post("/api/assessments/bulk-delete", auth, commanderOnly, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: "لا توجد معرفات" });
+    const { rows } = await pool.query("DELETE FROM assessment_sessions WHERE id = ANY($1::uuid[]) RETURNING id", [ids]);
+    res.json({ deleted: rows.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- IMPORT LOGS ----
+app.get("/api/import-logs", auth, commanderOnly, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT * FROM import_logs ORDER BY created_at DESC LIMIT 50"
+    );
+    res.json({ logs: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// TEST RESULTS IMPORT — Parse file + fuzzy name matching + review flow
+// ============================================================
+
+/**
+ * POST /api/admin/import-test-results
+ * Background auto-match: exact name string match only.
+ * - Saves all exact matches directly (transactional).
+ * - Skips rows where: no DB soldier has the same normalized name, or more than one soldier matches.
+ * - Returns {saved, skipped, skippedList}.
+ */
+app.post("/api/admin/import-test-results", auth, commanderOnly, upload.single("workbook"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "يجب رفع ملف Excel (.xlsx)" });
+    }
+
+    const parseResult = await parseTestResults(req.file.buffer);
+
+    if (parseResult.totalCount === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "لم يتم استخراج أي نتائج من الملف",
+        errors: parseResult.errors,
+        warnings: parseResult.warnings,
+      });
+    }
+
+    // Fetch all soldiers
+    const { rows: soldiers } = await pool.query(
+      "SELECT s.id, s.name, r.name as rank_name FROM soldiers s LEFT JOIN ranks r ON s.rank_id = r.id"
+    );
+
+    // Build normalized name → soldier(s) lookup
+    const { normalizeArabic } = require("./name-matcher");
+    const normMap = new Map();
+    for (const s of soldiers) {
+      const key = normalizeArabic(s.name);
+      if (!key) continue;
+      if (!normMap.has(key)) normMap.set(key, []);
+      normMap.get(key).push(s);
+    }
+
+    const saved = [];
+    const skipped = [];
+
+    for (const r of parseResult.results) {
+      const normName = normalizeArabic(r.name);
+      if (!normName) {
+        skipped.push({ name: r.name, reason: "اسم فارغ" });
+        continue;
+      }
+      const matches = normMap.get(normName) || [];
+      if (matches.length === 0) {
+        skipped.push({ name: r.name, reason: "لا يوجد مطابق في قاعدة البيانات" });
+      } else if (matches.length > 1) {
+        skipped.push({ name: r.name, reason: `يوجد ${matches.length} أسماء مطابقة: ${matches.map(m => m.name).join(", ")}` });
+      } else {
+        saved.push({ ...r, soldier_id: matches[0].id, soldier_name: matches[0].name });
+      }
+    }
+
+    // Save confirmed matches in a transaction
+    let sessionsInserted = 0;
+    let valuesInserted = 0;
+
+    if (saved.length > 0) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        for (const r of saved) {
+          // Upsert session (unique on soldier_id + type + date)
+          let sessResult = await client.query(
+            "SELECT id FROM assessment_sessions WHERE soldier_id=$1 AND session_type=$2 AND assessment_date=$3",
+            [r.soldier_id, r.test_type, r.test_date]
+          );
+
+          let sessionId;
+          if (sessResult.rows.length > 0) {
+            sessionId = sessResult.rows[0].id;
+            await client.query(
+              "UPDATE assessment_sessions SET worksheet_name=$1, workbook_filename=$2, imported_by=$3, updated_at=NOW() WHERE id=$4",
+              [`${r.test_type}_results`, "test-results-auto", req.user.id, sessionId]
+            );
+            await client.query("DELETE FROM assessment_values WHERE session_id=$1", [sessionId]);
+          } else {
+            sessResult = await client.query(
+              "INSERT INTO assessment_sessions(soldier_id, session_type, assessment_date, worksheet_name, workbook_filename, imported_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
+              [r.soldier_id, r.test_type, r.test_date, `${r.test_type}_results`, "test-results-auto", req.user.id]
+            );
+            sessionId = sessResult.rows[0].id;
+            sessionsInserted++;
+          }
+
+          // Insert field values
+          for (const [key, value] of Object.entries(r.score_details)) {
+            if (value === null || value === undefined) continue;
+            if (typeof value === "number") {
+              await client.query(
+                "INSERT INTO assessment_values(session_id, field_key, numeric_value) VALUES($1, $2, $3)",
+                [sessionId, key, value]
+              );
+            } else {
+              await client.query(
+                "INSERT INTO assessment_values(session_id, field_key, text_value) VALUES($1, $2, $3)",
+                [sessionId, key, String(value)]
+              );
+            }
+            valuesInserted++;
+          }
+        }
+        await client.query("COMMIT");
+      } catch (txError) {
+        await client.query("ROLLBACK");
+        throw txError;
+      } finally {
+        client.release();
+      }
+    }
+
+    // Log the import
+    try {
+      await pool.query(
+        "INSERT INTO import_logs(filename, imported_by, imported_by_name, worksheets_detected, sessions_detected, sessions_inserted, sessions_updated, employees_detected, date_groups_detected, validation_errors, processing_time_ms, status, error_details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+        [
+          req.file.originalname || "test-results-auto", req.user.id, req.user.name || "commander",
+          parseResult.sheets.length, saved.length, sessionsInserted, 0,
+          saved.length, 0, skipped.length, 0, "success",
+          JSON.stringify(skipped.slice(0, 50)),
+        ]
+      );
+    } catch (e) { /* non-fatal */ }
+
+    res.json({
+      success: true,
+      summary: {
+        totalParsed: parseResult.totalCount,
+        saved: saved.length,
+        skipped: skipped.length,
+        sheetsDetected: parseResult.sheets.length,
+        sessionsInserted,
+        valuesInserted,
+      },
+      sheets: parseResult.sheets,
+      skippedList: skipped,
+      warnings: parseResult.warnings,
+      errors: parseResult.errors,
+    });
+  } catch (e) {
+    console.error("import-test-results error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /api/admin/confirm-test-results
+ * Step 2: Receive confirmed matches and save to assessment_sessions + assessment_values.
+ * The body contains:
+ *   - results: array of { soldier_id, test_date, test_type, score_details, rank_from_file }
+ *
+ * This runs in a transaction. If any error occurs, rolls back everything.
+ */
+app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res) => {
+  try {
+    const { results } = req.body;
+    if (!results || !results.length) {
+      return res.status(400).json({ error: "لا توجد نتائج للحفظ" });
+    }
+
+    // Validate all soldier_ids exist
+    const soldierIds = [...new Set(results.map(r => r.soldier_id).filter(Boolean))];
+    if (soldierIds.length === 0) {
+      return res.status(400).json({ error: "لا توجد معرفات أفراد صالحة" });
+    }
+
+    const { rows: validSoldiers } = await pool.query(
+      "SELECT id FROM soldiers WHERE id = ANY($1::uuid[])",
+      [soldierIds]
+    );
+    const validIds = new Set(validSoldiers.map(s => s.id));
+    const invalidIds = soldierIds.filter(id => !validIds.has(id));
+
+    if (invalidIds.length > 0) {
+      return res.status(400).json({
+        error: `${invalidIds.length} معرفات أفراد غير صالحة`,
+        invalidIds,
+      });
+    }
+
+    let sessionsInserted = 0;
+    let sessionsUpdated = 0;
+    let valuesInserted = 0;
+    const errors = [];
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      for (const result of results) {
+        try {
+          const { soldier_id, test_date, test_type, score_details, rank_from_file } = result;
+
+          if (!soldier_id || !test_date || !test_type || !score_details) {
+            errors.push({ soldier_id, error: "بيانات ناقصة" });
+            continue;
+          }
+
+          // Upsert session (unique on soldier_id + type + date)
+          let sessResult = await client.query(
+            "SELECT id FROM assessment_sessions WHERE soldier_id=$1 AND session_type=$2 AND assessment_date=$3",
+            [soldier_id, test_type, test_date]
+          );
+
+          let sessionId;
+          if (sessResult.rows.length > 0) {
+            sessionId = sessResult.rows[0].id;
+            await client.query(
+              "UPDATE assessment_sessions SET worksheet_name=$1, workbook_filename=$2, imported_by=$3, updated_at=NOW() WHERE id=$4",
+              [`${test_type}_results`, "test-results-upload", req.user.id, sessionId]
+            );
+            await client.query("DELETE FROM assessment_values WHERE session_id=$1", [sessionId]);
+            sessionsUpdated++;
+          } else {
+            sessResult = await client.query(
+              "INSERT INTO assessment_sessions(soldier_id, session_type, assessment_date, worksheet_name, workbook_filename, imported_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
+              [soldier_id, test_type, test_date, `${test_type}_results`, "test-results-upload", req.user.id]
+            );
+            sessionId = sessResult.rows[0].id;
+            sessionsInserted++;
+          }
+
+          // Insert field values
+          for (const [key, value] of Object.entries(score_details)) {
+            if (value === null || value === undefined) continue;
+            if (typeof value === "number") {
+              await client.query(
+                "INSERT INTO assessment_values(session_id, field_key, numeric_value) VALUES($1, $2, $3)",
+                [sessionId, key, value]
+              );
+            } else {
+              await client.query(
+                "INSERT INTO assessment_values(session_id, field_key, text_value) VALUES($1, $2, $3)",
+                [sessionId, key, String(value)]
+              );
+            }
+            valuesInserted++;
+          }
+        } catch (e) {
+          errors.push({ soldier_id: result.soldier_id, error: e.message });
+        }
+      }
+
+      await client.query("COMMIT");
+    } catch (txError) {
+      await client.query("ROLLBACK");
+      throw txError;
+    } finally {
+      client.release();
+    }
+
+    // Log the import
+    try {
+      await pool.query(
+        "INSERT INTO import_logs(filename, imported_by, imported_by_name, worksheets_detected, sessions_detected, sessions_inserted, sessions_updated, employees_detected, date_groups_detected, validation_errors, processing_time_ms, status, error_details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+        [
+          "test-results-upload", req.user.id, req.user.name || "commander",
+          3, results.length, sessionsInserted, sessionsUpdated,
+          soldierIds.length, results.length, errors.length, 0, "success",
+          JSON.stringify(errors),
+        ]
+      );
+    } catch (e) { /* non-fatal */ }
+
+    res.json({
+      success: true,
+      message: `تم حفظ ${sessionsInserted} جلسة جديدة وتحديث ${sessionsUpdated} جلسة موجودة`,
+      sessionsInserted,
+      sessionsUpdated,
+      valuesInserted,
+      errors,
+      invalidIds,
+    });
+  } catch (e) {
+    console.error("confirm-test-results error:", e);
     res.status(500).json({ error: e.message });
   }
 });

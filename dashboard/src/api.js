@@ -166,6 +166,58 @@ export const api = {
   fullUpload: (data) => req('POST', '/admin/full-upload', data),
   confirmReturnSoldier: (id) => req('PATCH', `/soldiers/${id}/confirm-return`),
 
+  // Workbook import (server-side parsing, multipart file upload)
+  uploadWorkbook: async (file) => {
+    const token = localStorage.getItem('b20_token');
+    const formData = new FormData();
+    formData.append('workbook', file);
+    const res = await fetch(`${BASE}/admin/import-workbook`, {
+      method: 'POST',
+      headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+
+  // Assessments
+  getAssessments: (params) => {
+    const q = new URLSearchParams();
+    if (params?.type) q.set('type', params.type);
+    if (params?.soldier_id) q.set('soldier_id', params.soldier_id);
+    if (params?.date_from) q.set('date_from', params.date_from);
+    if (params?.date_to) q.set('date_to', params.date_to);
+    if (params?.page) q.set('page', params.page);
+    if (params?.limit) q.set('limit', params.limit);
+    return req('GET', `/assessments?${q.toString()}`);
+  },
+  getAssessmentStats: (type) => req('GET', `/assessments/stats${type ? `?type=${type}` : ''}`),
+  getSoldierAssessments: (soldierId, type) => req('GET', `/assessments/soldier/${soldierId}${type ? `?type=${type}` : ''}`),
+  deleteAssessment: (id) => req('DELETE', `/assessments/${id}`),
+  bulkDeleteAssessments: (ids) => req('POST', '/assessments/bulk-delete', { ids }),
+  getImportLogs: () => req('GET', '/import-logs'),
+
+  // Test results upload (server-side parse + fuzzy name match)
+  importTestResults: async (file) => {
+    const token = localStorage.getItem('b20_token');
+    const formData = new FormData();
+    formData.append('workbook', file);
+    const res = await fetch(`${BASE}/admin/import-test-results`, {
+      method: 'POST',
+      headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+  confirmTestResults: (results) => req('POST', '/admin/confirm-test-results', { results }),
+
   // Admin
   seed: () => req('POST', '/admin/seed'),
   clearAll: () => req('POST', '/admin/clear-all'),

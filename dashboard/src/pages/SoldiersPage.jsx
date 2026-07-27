@@ -5,6 +5,7 @@ import { smartMatch } from '../utils/translit';
 import Modal from '../components/Modal';
 import ScoreBadge from '../components/ScoreBadge';
 import ExcelUpload from '../components/ExcelUpload';
+import TestResultsUpload from '../components/TestResultsUpload';
 import BulkDeleteBar from '../components/BulkDeleteBar';
 
 const STATUS_OPTIONS = [
@@ -32,6 +33,7 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
   const [editSoldier, setEditSoldier] = useState(null);
   const [actionModal, setActionModal] = useState(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [showTestResults, setShowTestResults] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const navigate = useNavigate();
 
@@ -85,13 +87,19 @@ export default function SoldiersPage({ soldiers, weapons, specialties, ranks, us
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h4 className="text-gold mb-0">الأفراد</h4>
         <div className="d-flex gap-2">
-          {user?.role === 'commander' && <button onClick={() => setShowUpload(p => !p)} className="btn btn-outline-gold btn-sm">📥 رفع Excel</button>}
+          {user?.role === 'commander' && <button onClick={() => { setShowUpload(p => !p); setShowTestResults(false); }} className="btn btn-outline-gold btn-sm">📥 رفع Excel</button>}
+          {user?.role === 'commander' && <button onClick={() => { setShowTestResults(p => !p); setShowUpload(false); }} className="btn btn-outline-gold btn-sm">📊 رفع نتائج الاختبارات</button>}
           <button onClick={() => setEditSoldier({})} className="btn btn-gold btn-sm">+ إضافة فرد</button>
         </div>
       </div>
       {showUpload && (
         <div className="mb-4">
           <ExcelUpload onDone={() => { setShowUpload(false); onRefresh?.(); }} />
+        </div>
+      )}
+      {showTestResults && (
+        <div className="mb-4">
+          <TestResultsUpload soldiers={soldiers} onDone={() => { setShowTestResults(false); onRefresh?.(); }} />
         </div>
       )}
 

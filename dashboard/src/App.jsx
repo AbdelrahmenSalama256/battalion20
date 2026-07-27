@@ -19,6 +19,7 @@ import ExamsPage from './pages/ExamsPage';
 import AnnouncementsPage from './pages/AnnouncementsPage';
 import ManagePage from './pages/ManagePage';
 import PersonnelPage from './pages/PersonnelPage';
+import AssessmentsPage from './pages/AssessmentsPage';
 
 function SectionDetailGuard({ user, specialties, soldiers }) {
   const { key } = useParams();
@@ -203,6 +204,9 @@ export default function App() {
         } />
         <Route path="/personnel" element={
           <PersonnelPage user={u} soldiers={data.soldiers} />
+        } />
+        <Route path="/assessments" element={
+          <AssessmentsPage user={u} />
         } />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

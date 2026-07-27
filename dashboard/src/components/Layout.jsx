@@ -12,6 +12,7 @@ const ALL_TABS = [
     path: "/announcements",
   },
   { id: "personnel", label: "مكتب الأفراد", icon: "📋", path: "/personnel" },
+  { id: "assessments", label: "الاختبارات", icon: "📊", path: "/assessments" },
   {
     id: "notifications",
     label: "الإشعارات",
