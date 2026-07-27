@@ -216,7 +216,7 @@ export const api = {
     }
     return res.json();
   },
-  confirmTestResults: (results) => req('POST', '/admin/confirm-test-results', { results }),
+  confirmTestResults: (data) => req('POST', '/admin/confirm-test-results', data),
 
   // Admin
   seed: () => req('POST', '/admin/seed'),
