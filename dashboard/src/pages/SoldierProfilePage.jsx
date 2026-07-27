@@ -78,10 +78,14 @@ export default function SoldierProfilePage({ user, onRefresh }) {
     if (testLoaded) return;
     setTestLoading(true);
     try {
+      console.log('[TEST-RESULTS] fetching for soldier id:', id);
       const data = await api.getSoldierAssessments(id);
+      console.log('[TEST-RESULTS] raw API response:', JSON.stringify(data).substring(0, 500));
+      console.log('[TEST-RESULTS] data.sessions:', data.sessions, 'type:', typeof data.sessions, 'isArray:', Array.isArray(data.sessions));
+      console.log('[TEST-RESULTS] data keys:', Object.keys(data));
       setTestSessions(data.sessions || []);
       setTestLoaded(true);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('[TEST-RESULTS] ERROR:', e); }
     setTestLoading(false);
   }
 
@@ -484,7 +488,9 @@ export default function SoldierProfilePage({ user, onRefresh }) {
       )}
 
       {/* Test Results Tab */}
-      {activeTab === 'test-results' && (
+      {activeTab === 'test-results' && (() => {
+        console.log('[TEST-RESULTS-RENDER] testLoading:', testLoading, 'testSessions.length:', testSessions.length, 'testLoaded:', testLoaded, 'activeTab:', activeTab);
+        return (
         <div>
           <h5 className="text-gold mb-3">نتائج الاختبارات</h5>
           {testLoading ? (
@@ -544,7 +550,8 @@ export default function SoldierProfilePage({ user, onRefresh }) {
             ));
           })()}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
