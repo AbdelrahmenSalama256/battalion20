@@ -27,6 +27,10 @@ pool.on("error", (err) => {
 });
 const db = { query: (text, params) => pool.query(text, params), pool };
 
+// Run migrations immediately on module load (Vercel cold start).
+// All statements use IF NOT EXISTS so safe to run multiple times.
+const migrationsReady = runMigrations().catch(e => console.error("Migration error:", e.message));
+
 async function runMigrations() {
   await pool.query("SELECT 1");
   console.log("DB connected");
@@ -199,6 +203,11 @@ app.use((req, res, next) => {
   if (req.path.startsWith("/.netlify/functions/api"))
     req.url = "/api" + req.url.substring("/.netlify/functions/api".length);
   if (!req.path.startsWith("/api")) req.url = "/api" + req.url;
+  next();
+});
+// Wait for migrations before processing any request (Vercel cold start)
+app.use(async (req, res, next) => {
+  try { await migrationsReady; } catch (e) { /* non-fatal */ }
   next();
 });
 
@@ -3116,8 +3125,6 @@ app.use((err, req, res, next) => {
 });
 
 module.exports = app;
-// Run migrations on module load (Vercel cold start) — all statements use IF NOT EXISTS
-runMigrations().catch(e => console.error("Migration error:", e.message));
 if (typeof process.env.VERCEL === "undefined") {
   const port = process.env.PORT || 3001;
   app.listen(port, async () => {
