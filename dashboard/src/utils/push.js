@@ -13,9 +13,14 @@ export async function registerPush() {
     // Check existing subscription
     const existing = await reg.pushManager.getSubscription();
     if (existing) {
-      // Re-send to backend in case server restarted
       sendToBackend(existing);
       return true;
+    }
+
+    // Don't request if permission already denied
+    if (Notification.permission === 'denied') {
+      console.log('Push permission denied');
+      return false;
     }
 
     // Subscribe
