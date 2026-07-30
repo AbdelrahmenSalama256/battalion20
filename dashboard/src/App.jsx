@@ -46,15 +46,13 @@ export default function App() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [sections, sold, sp, rk, wp, us, notif] = await Promise.all([
-        api.getSections().catch(() => []),
-        api.getSoldiers({}).catch(() => []),
-        api.getSpecialties().catch(() => []),
-        api.getRanks().catch(() => []),
-        api.getWeapons().catch(() => []),
-        api.getUsers().catch(() => []),
-        api.getNotifications().catch(() => ({ notifications: [] })),
-      ]);
+      const sections = await api.getSections().catch(() => []);
+      const sold = await api.getSoldiers({}).catch(() => []);
+      const sp = await api.getSpecialties().catch(() => []);
+      const rk = await api.getRanks().catch(() => []);
+      const wp = await api.getWeapons().catch(() => []);
+      const us = await api.getUsers().catch(() => []);
+      const notif = await api.getNotifications().catch(() => ({ notifications: [] }));
       setData({
         sections,
         soldiers: sold,

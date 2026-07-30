@@ -14,14 +14,33 @@ const { classifyMatches } = require("./name-matcher");
 
 const DB_URL = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0] : undefined;
 const isLocal = DB_URL && DB_URL.includes("localhost");
+function retryQuery(fn, retries = 3, delay = 500) {
+  return fn().catch(async (err) => {
+    if (retries > 0 && (err.message?.includes("EMAXCONNSESSION") || err.code === "ECONNRESET")) {
+      await new Promise(r => setTimeout(r, delay));
+      return retryQuery(fn, retries - 1, delay * 2);
+    }
+    throw err;
+  });
+}
+
 const pool = new Pool({
   connectionString: DB_URL,
   ssl: isLocal ? false : { rejectUnauthorized: false },
-  max: 2,
+  max: 1,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000,
   query_timeout: 10000,
 });
+
+// Wrap pool.query with retry for transient pool exhaustion
+const origQuery = pool.query.bind(pool);
+pool.query = (text, params) => retryQuery(() => origQuery(text, params), 5, 300);
+
+// Wrap pool.connect with retry for transient pool exhaustion
+const origConnect = pool.connect.bind(pool);
+pool.connect = () => retryQuery(() => origConnect(), 5, 300);
+
 pool.on("error", (err) => {
   console.error("POOL ERROR:", err?.message || err);
 });
