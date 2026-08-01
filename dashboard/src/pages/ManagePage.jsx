@@ -109,7 +109,7 @@ function SpecialtiesManager() {
       {showForm != null && (
         <ItemForm item={showForm} fields={[
           { key: 'name', label: 'الاسم', type: 'text' },
-          { key: 'weapon_id', label: 'السلاح', type: 'select', options: weapons.map(w => ({ value: w.id, label: w.name })) },
+          { key: 'weaponId', label: 'السلاح', type: 'select', options: weapons.map(w => ({ value: w.id, label: w.name })) },
           { key: 'description', label: 'الوصف', type: 'textarea' },
         ]}
           onSave={async (data) => {
@@ -301,7 +301,8 @@ function ItemForm({ item, fields, onSave, onClose, onDone }) {
   const [form, setForm] = useState(() => {
     const init = {};
     fields.forEach(f => {
-      init[f.key] = item[f.key] ?? (f.type === 'checkbox' ? true : '');
+      if (f.key === 'weaponId' && item.weapon_id != null) init.weaponId = item.weapon_id;
+      else init[f.key] = item[f.key] ?? (f.type === 'checkbox' ? true : '');
     });
     return init;
   });
