@@ -3194,7 +3194,7 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
       return res.status(400).json({ error: "لا توجد نتائج للحفظ" });
     }
 
-    const crypto = require("crypto");
+    const { normalizeArabic } = require("./name-matcher");
 
     // Build merge map: source_name → target_temp_id
     const mergeMap = new Map();
@@ -3215,233 +3215,282 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
       }
     }
 
-    const { normalizeArabic } = require("./name-matcher");
-
-    // ---- Fuzzy rank resolution helper ----
-    // File ranks are abbreviated ("رقيب أ", "مساعد أ") — match by normalized
-    // name, then by prefix, and expand common abbreviations.
+    // ---- Rank resolution (in-memory, 1 preload query) ----
     const RANK_EXPANSIONS = {
       "أ": "أول", "ا": "أول", "الاول": "أول", "الأول": "أول",
       "ث": "ثاني", "ثان": "ثاني",
     };
-    async function resolveRankId(rankName) {
+    const rankRows = await db.query("SELECT id, name FROM ranks");
+    const ranks = rankRows.rows;
+    const normRank = (n) => normalizeArabic(String(n)).replace(/\s+/g, "");
+    const rankByNorm = new Map(ranks.map(r => [normRank(r.name), r.id]));
+    function resolveRankId(rankName) {
       if (!rankName) return null;
       const name = String(rankName).trim();
-      const { rows } = await db.query("SELECT id, name FROM ranks");
-      if (!rows.length) return null;
-      const norm = n => normalizeArabic(n).replace(/\s+/g, "");
-      // 1. exact normalized
-      let hit = rows.find(r => norm(r.name) === norm(name));
+      if (!ranks.length) return null;
+      const n = normRank(name);
+      if (rankByNorm.has(n)) return rankByNorm.get(n);
+      let hit = ranks.find(r => { const rn = normRank(r.name); return rn.startsWith(n) && rn.length > n.length; });
       if (hit) return hit.id;
-      // 2. prefix: file rank is the start of a DB rank (e.g. "رقيب" → "رقيب أول")
-      hit = rows.find(r => norm(r.name).startsWith(norm(name)) && norm(r.name).length > norm(name).length);
-      if (hit) return hit.id;
-      // 3. expand abbreviations: "رقيب أ" → "رقيب أول"
       const parts = name.split(/\s+/);
       if (parts.length >= 2) {
         const last = parts[parts.length - 1];
-        const exp = RANK_EXPANSIONS[norm(last)] || RANK_EXPANSIONS[last.replace(/[\u064B-\u065F]/g, "")];
+        const exp = RANK_EXPANSIONS[normRank(last)] || RANK_EXPANSIONS[last.replace(/[\u064B-\u065F]/g, "")];
         if (exp) {
           const expanded = [...parts.slice(0, -1), exp].join(" ");
-          hit = rows.find(r => norm(r.name) === norm(expanded));
-          if (hit) return hit.id;
-          hit = rows.find(r => norm(r.name).startsWith(norm(expanded)));
+          hit = ranks.find(r => normRank(r.name) === normRank(expanded)) ||
+                ranks.find(r => normRank(r.name).startsWith(normRank(expanded)));
           if (hit) return hit.id;
         }
       }
       return null;
     }
 
-    // ---- Specialty find-or-create helper ----
-    async function resolveSpecialtyId(specialtyName) {
-      if (!specialtyName) return null;
-      const name = String(specialtyName).trim();
-      const { rows } = await db.query("SELECT id FROM specialties WHERE name = $1", [name]);
-      if (rows.length > 0) return rows[0].id;
-      const ins = await db.query("INSERT INTO specialties(name) VALUES($1) ON CONFLICT DO NOTHING RETURNING id", [name]);
-      if (ins.rows.length > 0) return ins.rows[0].id;
-      const re = await db.query("SELECT id FROM specialties WHERE name = $1", [name]);
-      return re.rows[0]?.id || null;
+    // ---- Specialty resolution (in-memory, inserts only for brand-new names) ----
+    const specRows = await db.query("SELECT id, name FROM specialties");
+    const specByName = new Map(specRows.rows.map(s => [String(s.name).trim(), s.id]));
+    async function resolveSpecialtyId(name) {
+      if (!name) return null;
+      const key = String(name).trim();
+      if (specByName.has(key)) return specByName.get(key);
+      const ins = await db.query("INSERT INTO specialties(name) VALUES($1) ON CONFLICT DO NOTHING RETURNING id", [key]);
+      if (ins.rows.length > 0) {
+        specByName.set(key, ins.rows[0].id);
+        return ins.rows[0].id;
+      }
+      const re = await db.query("SELECT id FROM specialties WHERE name = $1", [key]);
+      if (re.rows.length > 0) {
+        specByName.set(key, re.rows[0].id);
+        return re.rows[0].id;
+      }
+      return null;
     }
 
-    // ---- Rank fuzzy match against existing DB soldiers (update their rank too) ----
-    const rankCache = new Map(); // fileRankName → rank_id
-    async function cachedRankId(fileRank) {
-      if (!fileRank) return null;
-      if (rankCache.has(fileRank)) return rankCache.get(fileRank);
-      const id = await resolveRankId(fileRank);
-      rankCache.set(fileRank, id);
-      return id;
-    }
-
-    // Collect unique temp_ids that need new soldier records
-    const tempIdSoldiers = new Map(); // temp_id → { name, rank_from_file, detected_specialty }
+    // Pre-resolve every specialty name we may need (few inserts, outside txn)
+    const neededSpecs = new Set();
     for (const r of results) {
-      if (r.match_status === "new" && r.temp_id) {
-        if (!tempIdSoldiers.has(r.temp_id)) {
-          tempIdSoldiers.set(r.temp_id, {
-            name: r.name,
-            rank_from_file: r.rank_from_file,
-            detected_specialty: r.detected_specialty,
-          });
-        }
-      }
-      // Handle fuzzy_flagged that user chose to merge
-      if (r.match_status === "fuzzy_flagged" && r.temp_id) {
-        if (!tempIdSoldiers.has(r.temp_id)) {
-          tempIdSoldiers.set(r.temp_id, {
-            name: r.name,
-            rank_from_file: r.rank_from_file,
-            detected_specialty: r.detected_specialty,
-          });
-        }
+      const s = specialtyMap.get(r.temp_id) || r.detected_specialty;
+      if (s) neededSpecs.add(String(s).trim());
+    }
+    for (const sc of (specialty_confirmations || [])) {
+      if (sc.specialty) neededSpecs.add(String(sc.specialty).trim());
+    }
+    for (const specName of neededSpecs) await resolveSpecialtyId(specName);
+
+    // ---- Collect new temp_id soldiers ----
+    const tempIdSoldiers = new Map();
+    for (const r of results) {
+      if ((r.match_status === "new" || r.match_status === "fuzzy_flagged") && r.temp_id && !tempIdSoldiers.has(r.temp_id)) {
+        tempIdSoldiers.set(r.temp_id, {
+          name: r.name,
+          rank_from_file: r.rank_from_file,
+          detected_specialty: r.detected_specialty,
+        });
       }
     }
+
+    const tempIds = [...tempIdSoldiers.keys()];
+    const existingRes = tempIds.length
+      ? await db.query("SELECT id, temp_id FROM soldiers WHERE temp_id = ANY($1::text[])", [tempIds])
+      : { rows: [] };
+    const tempIdToSoldierId = new Map(existingRes.rows.map(row => [row.temp_id, row.id]));
 
     let sessionsInserted = 0;
     let sessionsUpdated = 0;
     let valuesInserted = 0;
     let soldiersCreated = 0;
     const errors = [];
-    const createdSoldiers = []; // { temp_id, soldier_id, name }
+    const createdSoldiers = [];
 
     const client = await db.connect();
     try {
       await client.query("BEGIN");
 
-      // Create temp_id soldier records
+      // Bulk insert new temp_id soldiers (1 query)
+      const soldierInsertRows = [];
+      const soldierInsertParams = [];
       for (const [tempId, info] of tempIdSoldiers) {
-        try {
-          // Resolve rank_id from rank name (fuzzy)
-          const rankId = await cachedRankId(info.rank_from_file);
-
-          const specialty = specialtyMap.get(tempId) || info.detected_specialty || null;
-          const specId = await resolveSpecialtyId(specialty);
-          const insRes = await client.query(
-            "INSERT INTO soldiers(name, temp_id, rank_id, specific_specialty, specialty_id) VALUES($1, $2, $3, $4, $5) RETURNING id, temp_id, name",
-            [info.name, tempId, rankId, specialty, specId]
-          );
-          createdSoldiers.push({ temp_id: tempId, soldier_id: insRes.rows[0].id, name: info.name });
-          soldiersCreated++;
-        } catch (e) {
-          errors.push({ temp_id: tempId, error: e.message });
-        }
+        if (tempIdToSoldierId.has(tempId)) continue;
+        const rankId = resolveRankId(info.rank_from_file);
+        const specialty = specialtyMap.get(tempId) || info.detected_specialty || null;
+        const specId = specialty ? specByName.get(String(specialty).trim()) : null;
+        soldierInsertParams.push(info.name, tempId, rankId, specialty, specId);
+        const i = soldierInsertParams.length;
+        soldierInsertRows.push(`($${i - 4}, $${i - 3}, $${i - 2}, $${i - 1}, $${i})`);
       }
-
-      // Build temp_id → soldier_id lookup (both newly created and pre-existing)
-      const tempIdToSoldierId = new Map();
-      for (const cs of createdSoldiers) {
-        tempIdToSoldierId.set(cs.temp_id, cs.soldier_id);
-      }
-      // Also look up existing soldiers that already have temp_ids
-      const allTempIds = [...tempIdSoldiers.keys()];
-      if (allTempIds.length > 0) {
-        const existingRes = await client.query(
-          "SELECT id, temp_id FROM soldiers WHERE temp_id = ANY($1::text[])",
-          [allTempIds]
+      if (soldierInsertRows.length > 0) {
+        const ins = await client.query(
+          `INSERT INTO soldiers(name, temp_id, rank_id, specific_specialty, specialty_id) VALUES ${soldierInsertRows.join(",")} RETURNING id, temp_id, name`,
+          soldierInsertParams
         );
-        for (const row of existingRes.rows) {
-          if (!tempIdToSoldierId.has(row.temp_id)) {
-            tempIdToSoldierId.set(row.temp_id, row.id);
-          }
+        for (const row of ins.rows) {
+          tempIdToSoldierId.set(row.temp_id, row.id);
+          createdSoldiers.push({ temp_id: row.temp_id, soldier_id: row.id, name: row.name });
+          soldiersCreated++;
         }
       }
 
-      // Apply specialty confirmations to existing soldiers
+      // Apply specialty confirmations to existing soldiers (1 query)
+      const specConfRows = [];
+      const specConfParams = [];
       for (const sc of (specialty_confirmations || [])) {
         if (sc.soldier_id && sc.specialty) {
-          try {
-            const specId = await resolveSpecialtyId(sc.specialty);
-            await client.query(
-              "UPDATE soldiers SET specific_specialty = $1, specialty_id = $2 WHERE id = $3",
-              [sc.specialty, specId, sc.soldier_id]
-            );
-          } catch (e) { /* non-fatal */ }
+          const specId = specByName.get(String(sc.specialty).trim()) || null;
+          specConfParams.push(sc.specialty, specId, sc.soldier_id);
+          const i = specConfParams.length;
+          specConfRows.push(`($${i - 2}::text, $${i - 1}::uuid, $${i}::uuid)`);
+        }
+      }
+      if (specConfRows.length > 0) {
+        await client.query(
+          `UPDATE soldiers SET specific_specialty = v.spec, specialty_id = v.spec_id FROM (VALUES ${specConfRows.join(",")}) AS v(spec, spec_id, sid) WHERE soldiers.id = v.sid`,
+          specConfParams
+        );
+      }
+
+      // Resolve soldier per result + rank/specialty updates (1 query)
+      const soldierUpdates = new Map();
+      for (const result of results) {
+        let soldierId = result.soldier_id || null;
+        if (!soldierId && result.temp_id) soldierId = tempIdToSoldierId.get(result.temp_id);
+        if (result.match_status === "fuzzy_flagged" && result.fuzzy_candidate) {
+          const fuzzyNorm = normalizeArabic(result.fuzzy_candidate.name);
+          const targetTempId = mergeMap.get(fuzzyNorm) || result.fuzzy_candidate.temp_id;
+          soldierId = tempIdToSoldierId.get(targetTempId) || soldierId;
+        }
+        result._soldierId = soldierId;
+        if (!soldierId) continue;
+        const fileRank = result.rank_from_file;
+        const specName = specialtyMap.get(soldierId) || result.detected_specialty || null;
+        const rankId = resolveRankId(fileRank);
+        const specId = specName ? specByName.get(String(specName).trim()) : null;
+        if (!rankId && !specName) continue;
+        const prev = soldierUpdates.get(soldierId);
+        soldierUpdates.set(soldierId, {
+          rankId: rankId || (prev && prev.rankId),
+          specName: specName || (prev && prev.specName),
+          specId: specId || (prev && prev.specId),
+        });
+      }
+      const updRows = [];
+      const updParams = [];
+      for (const [sid, u] of soldierUpdates) {
+        updParams.push(u.rankId, u.specName, u.specId, sid);
+        const i = updParams.length;
+        updRows.push(`($${i - 3}::uuid, $${i - 2}::text, $${i - 1}::uuid, $${i}::uuid)`);
+      }
+      if (updRows.length > 0) {
+        await client.query(
+          `UPDATE soldiers SET
+             rank_id = COALESCE(v.rank_id, soldiers.rank_id),
+             specific_specialty = COALESCE(v.spec_name, soldiers.specific_specialty),
+             specialty_id = COALESCE(v.spec_id, soldiers.specialty_id)
+           FROM (VALUES ${updRows.join(",")}) AS v(rank_id, spec_name, spec_id, sid)
+           WHERE soldiers.id = v.sid`,
+          updParams
+        );
+      }
+
+      // Load existing sessions for every involved soldier (1 query)
+      const involvedIds = [...new Set(results.map(r => r._soldierId).filter(Boolean))];
+      const dateKey = (v) => {
+        if (v instanceof Date) {
+          const y = v.getFullYear();
+          const m = String(v.getMonth() + 1).padStart(2, "0");
+          const d = String(v.getDate()).padStart(2, "0");
+          return `${y}-${m}-${d}`;
+        }
+        return String(v).slice(0, 10);
+      };
+      const sessRes = involvedIds.length
+        ? await client.query("SELECT id, soldier_id, session_type, assessment_date FROM assessment_sessions WHERE soldier_id = ANY($1::uuid[])", [involvedIds])
+        : { rows: [] };
+      const sessionKeyToId = new Map();
+      for (const s of sessRes.rows) {
+        sessionKeyToId.set(`${s.soldier_id}|${s.session_type}|${dateKey(s.assessment_date)}`, s.id);
+      }
+
+      // Build session upsert batches
+      const sessUpdateRows = [];
+      const sessUpdateParams = [];
+      const sessInsertRows = [];
+      const sessInsertParams = [];
+      for (const result of results) {
+        const soldierId = result._soldierId;
+        if (!soldierId) {
+          errors.push({ name: result.name, error: "بيانات ناقصة — لا يمكن الحفظ" });
+          continue;
+        }
+        if (!result.test_date || !result.test_type || !result.score_details) {
+          errors.push({ name: result.name, error: "بيانات ناقصة — لا يمكن الحفظ" });
+          continue;
+        }
+        const dateStr = String(result.test_date).slice(0, 10);
+        const key = `${soldierId}|${result.test_type}|${dateStr}`;
+        result._sessionKey = key;
+        const existingId = sessionKeyToId.get(key);
+        if (existingId) {
+          sessUpdateParams.push(`${result.test_type}_results`, "test-results-import", req.user.id, existingId);
+          const i = sessUpdateParams.length;
+          sessUpdateRows.push(`($${i - 3}::text, $${i - 2}::text, $${i - 1}::uuid, $${i}::uuid)`);
+          sessionsUpdated++;
+        } else {
+          sessInsertParams.push(soldierId, result.test_type, dateStr, `${result.test_type}_results`, "test-results-import", req.user.id);
+          const i = sessInsertParams.length;
+          sessInsertRows.push(`($${i - 5}::uuid, $${i - 4}::text, $${i - 3}::date, $${i - 2}::text, $${i - 1}::text, $${i}::uuid)`);
+          sessionsInserted++;
         }
       }
 
-      // Save assessment sessions + values
-      for (const result of results) {
-        try {
-          // Resolve soldier_id
-          let soldierId = result.soldier_id || null;
-          if (!soldierId && result.temp_id) {
-            soldierId = tempIdToSoldierId.get(result.temp_id);
-          }
-
-          // Handle merge: fuzzy_flagged results that user confirmed to merge
-          if (result.match_status === "fuzzy_flagged" && result.fuzzy_candidate) {
-            const fuzzyNorm = normalizeArabic(result.fuzzy_candidate.name);
-            const targetTempId = mergeMap.get(fuzzyNorm) || result.fuzzy_candidate.temp_id;
-            soldierId = tempIdToSoldierId.get(targetTempId) || soldierId;
-          }
-
-          if (!soldierId) {
-            errors.push({ name: result.name, error: "بيانات ناقصة — لا يمكن الحفظ" });
-            continue;
-          }
-
-          // Update rank + specialty for the matched soldier (new OR existing)
-          try {
-            const fileRank = result.rank_from_file;
-            const specName = specialtyMap.get(soldierId) || result.detected_specialty || null;
-            const rankId = await cachedRankId(fileRank);
-            const specId = await resolveSpecialtyId(specName);
-            if (rankId || specName) {
-              await client.query(
-                "UPDATE soldiers SET rank_id = COALESCE($1, rank_id), specific_specialty = COALESCE($2, specific_specialty), specialty_id = COALESCE($3, specialty_id) WHERE id = $4",
-                [rankId, specName || null, specId, soldierId]
-              );
-            }
-          } catch (e) { /* non-fatal */ }
-
-          if (!result.test_date || !result.test_type || !result.score_details) {
-            errors.push({ name: result.name, error: "بيانات ناقصة — لا يمكن الحفظ" });
-            continue;
-          }
-
-          // Upsert session (unique on soldier_id + type + date)
-          let sessResult = await client.query(
-            "SELECT id FROM assessment_sessions WHERE soldier_id=$1 AND session_type=$2 AND assessment_date=$3",
-            [soldierId, result.test_type, result.test_date]
-          );
-
-          let sessionId;
-          if (sessResult.rows.length > 0) {
-            sessionId = sessResult.rows[0].id;
-            await client.query(
-              "UPDATE assessment_sessions SET worksheet_name=$1, workbook_filename=$2, imported_by=$3, updated_at=NOW() WHERE id=$4",
-              [`${result.test_type}_results`, "test-results-import", req.user.id, sessionId]
-            );
-            await client.query("DELETE FROM assessment_values WHERE session_id=$1", [sessionId]);
-            sessionsUpdated++;
-          } else {
-            sessResult = await client.query(
-              "INSERT INTO assessment_sessions(soldier_id, session_type, assessment_date, worksheet_name, workbook_filename, imported_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
-              [soldierId, result.test_type, result.test_date, `${result.test_type}_results`, "test-results-import", req.user.id]
-            );
-            sessionId = sessResult.rows[0].id;
-            sessionsInserted++;
-          }
-
-          for (const [key, value] of Object.entries(result.score_details)) {
-            if (value === null || value === undefined) continue;
-            if (typeof value === "number") {
-              await client.query(
-                "INSERT INTO assessment_values(session_id, field_key, numeric_value) VALUES($1, $2, $3)",
-                [sessionId, key, value]
-              );
-            } else {
-              await client.query(
-                "INSERT INTO assessment_values(session_id, field_key, text_value) VALUES($1, $2, $3)",
-                [sessionId, key, String(value)]
-              );
-            }
-            valuesInserted++;
-          }
-        } catch (e) {
-          errors.push({ name: result.name, error: e.message });
+      if (sessUpdateRows.length > 0) {
+        await client.query(
+          `UPDATE assessment_sessions SET worksheet_name = v.wn, workbook_filename = v.wf, imported_by = v.ib, updated_at = NOW() FROM (VALUES ${sessUpdateRows.join(",")}) AS v(wn, wf, ib, sid) WHERE assessment_sessions.id = v.sid`,
+          sessUpdateParams
+        );
+        const clearIds = sessUpdateParams.filter((_, idx) => (idx + 1) % 4 === 0);
+        await client.query("DELETE FROM assessment_values WHERE session_id = ANY($1::uuid[])", [clearIds]);
+      }
+      if (sessInsertRows.length > 0) {
+        const ins = await client.query(
+          `INSERT INTO assessment_sessions(soldier_id, session_type, assessment_date, worksheet_name, workbook_filename, imported_by) VALUES ${sessInsertRows.join(",")} RETURNING id, soldier_id, session_type, assessment_date`,
+          sessInsertParams
+        );
+        for (const row of ins.rows) {
+          sessionKeyToId.set(`${row.soldier_id}|${row.session_type}|${dateKey(row.assessment_date)}`, row.id);
         }
+      }
+
+      // Insert values (2 batched queries)
+      const numericVals = { sessionIds: [], keys: [], values: [] };
+      const textVals = { sessionIds: [], keys: [], values: [] };
+      for (const result of results) {
+        const sessionId = sessionKeyToId.get(result._sessionKey);
+        if (!sessionId) continue;
+        for (const [key, value] of Object.entries(result.score_details)) {
+          if (value === null || value === undefined) continue;
+          if (typeof value === "number") {
+            numericVals.sessionIds.push(sessionId);
+            numericVals.keys.push(key);
+            numericVals.values.push(value);
+          } else {
+            textVals.sessionIds.push(sessionId);
+            textVals.keys.push(key);
+            textVals.values.push(String(value));
+          }
+          valuesInserted++;
+        }
+      }
+      if (numericVals.values.length > 0) {
+        await client.query(
+          `INSERT INTO assessment_values(session_id, field_key, numeric_value) SELECT * FROM unnest($1::uuid[], $2::text[], $3::float8[])`,
+          [numericVals.sessionIds, numericVals.keys, numericVals.values]
+        );
+      }
+      if (textVals.values.length > 0) {
+        await client.query(
+          `INSERT INTO assessment_values(session_id, field_key, text_value) SELECT * FROM unnest($1::uuid[], $2::text[], $3::text[])`,
+          [textVals.sessionIds, textVals.keys, textVals.values]
+        );
       }
 
       await client.query("COMMIT");
