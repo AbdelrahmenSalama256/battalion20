@@ -16,7 +16,13 @@ const DB_URL = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0]
 const isLocal = DB_URL && DB_URL.includes("localhost");
 function retryQuery(fn, retries = 3, delay = 500) {
   return fn().catch(async (err) => {
-    if (retries > 0 && (err.message?.includes("EMAXCONNSESSION") || err.code === "ECONNRESET")) {
+    const msg = err?.message || "";
+    const retryable =
+      msg.includes("EMAXCONNSESSION") ||
+      msg.includes("timeout exceeded when trying to connect") ||
+      msg.includes("remaining connection slots") ||
+      err?.code === "ECONNRESET";
+    if (retries > 0 && retryable) {
       await new Promise(r => setTimeout(r, delay));
       return retryQuery(fn, retries - 1, delay * 2);
     }
