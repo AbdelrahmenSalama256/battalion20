@@ -1800,15 +1800,18 @@ app.use("/api/users", us);
 app.post("/api/admin/seed", auth, commanderOnly, async (req, res) => {
   const results = {};
   const safe = async (label, fn) => { try { await fn(); results[label] = 'ok'; } catch (e) { results[label] = e.message; } };
+  const referenceOnly = req.body && req.body.referenceOnly === true;
   try {
     await safe('weapons', () => db.query("INSERT INTO weapons(name,icon)VALUES('المشاة','🔫'),('المدرعات','🛡️'),('المدفعية','💣'),('الإشارة','📡'),('المهندسين','🔧') ON CONFLICT DO NOTHING"));
     await safe('rank_types', () => db.query("INSERT INTO rank_types(name,color)VALUES('ضباط','#C9A84C'),('صف ضباط','#9CAF88'),('جنود','#2D6A4F') ON CONFLICT DO NOTHING"));
     await safe('ranks', () => db.query(`WITH rt AS (SELECT id FROM rank_types WHERE name='ضباط' LIMIT 1), srt AS (SELECT id FROM rank_types WHERE name='صف ضباط' LIMIT 1), jrt AS (SELECT id FROM rank_types WHERE name='جنود' LIMIT 1) INSERT INTO ranks(name,type_id,sort_order) SELECT v.name,v.tid,v.so FROM (VALUES('جندي',(SELECT id FROM jrt),1),('جندي أول',(SELECT id FROM jrt),2),('عريف',(SELECT id FROM srt),3),('وكيل رقيب',(SELECT id FROM srt),4),('رقيب',(SELECT id FROM srt),5),('رقيب أول',(SELECT id FROM srt),6),('مساعد',(SELECT id FROM srt),7),('مساعد أول',(SELECT id FROM srt),8),('ملازم',(SELECT id FROM rt),9),('ملازم أول',(SELECT id FROM rt),10),('نقيب',(SELECT id FROM rt),11),('رائد',(SELECT id from rt),12),('مقدم',(SELECT id from rt),13),('عقيد',(SELECT id from rt),14),('عميد',(SELECT id from rt),15),('فريق',(SELECT id from rt),16),('فريق أول',(SELECT id from rt),17)) AS v(name,tid,so) WHERE NOT EXISTS (SELECT 1 FROM ranks WHERE ranks.name = v.name)`));
     await safe('specialties', () => db.query("INSERT INTO specialties(name,weapon_id)SELECT 'قناص',(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons) ON CONFLICT DO NOTHING"));
-    await safe('soldiers', () => db.query("INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id)SELECT 'جندي تجريبي','12345',(SELECT id FROM ranks WHERE name='جندي' LIMIT 1),(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1),(SELECT id FROM specialties LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons) AND NOT EXISTS(SELECT 1 FROM soldiers WHERE military_id='12345')"));
-    await safe('exams', () => db.query("INSERT INTO exams(section_key,title)SELECT 'fitness','اختبار تجريبي' WHERE EXISTS(SELECT 1 FROM weapons) AND NOT EXISTS(SELECT 1 FROM exams)"));
-    await safe('announcements', () => db.query("INSERT INTO announcements(title,content,priority,created_by)SELECT 'مرحباً','المنصة جاهزة للعمل','info',(SELECT id FROM users WHERE role='commander' LIMIT 1) WHERE NOT EXISTS(SELECT 1 FROM announcements)"));
-    res.json({ message: "✅ تم إضافة بيانات تجريبية", results });
+    if (!referenceOnly) {
+      await safe('soldiers', () => db.query("INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id)SELECT 'جندي تجريبي','12345',(SELECT id FROM ranks WHERE name='جندي' LIMIT 1),(SELECT id FROM weapons WHERE name='المشاة' LIMIT 1),(SELECT id FROM specialties LIMIT 1) WHERE EXISTS(SELECT 1 FROM weapons) AND NOT EXISTS(SELECT 1 FROM soldiers WHERE military_id='12345')"));
+      await safe('exams', () => db.query("INSERT INTO exams(section_key,title)SELECT 'fitness','اختبار تجريبي' WHERE EXISTS(SELECT 1 FROM weapons) AND NOT EXISTS(SELECT 1 FROM exams)"));
+      await safe('announcements', () => db.query("INSERT INTO announcements(title,content,priority,created_by)SELECT 'مرحباً','المنصة جاهزة للعمل','info',(SELECT id FROM users WHERE role='commander' LIMIT 1) WHERE NOT EXISTS(SELECT 1 FROM announcements)"));
+    }
+    res.json({ message: referenceOnly ? "✅ تم استعادة الرتب والأسلحة والتخصصات" : "✅ تم إضافة بيانات تجريبية", results });
   } catch (e) {
     res.status(500).json({ error: e.message, results });
   }
@@ -2065,6 +2068,8 @@ app.post("/api/soldiers/bulk-upload", auth, commanderOnly, async (req, res) => {
 });
 
 // ---- CLEAR ALL DATA (commander only) ----
+// Keeps reference tables (ranks/weapons/specialties/rank_types/fitness_exercises)
+// and re-seeds them so imports always resolve ranks/specialties afterwards.
 app.post("/api/admin/clear-all", auth, commanderOnly, async (req, res) => {
   try {
     await db.query("DELETE FROM result_item_scores WHERE result_id IN (SELECT id FROM results)").catch(() => {});
@@ -2073,17 +2078,18 @@ app.post("/api/admin/clear-all", auth, commanderOnly, async (req, res) => {
     await db.query("DELETE FROM distinctions");
     await db.query("DELETE FROM punishments");
     await db.query("DELETE FROM results");
+    await db.query("DELETE FROM assessment_values").catch(() => {});
+    await db.query("DELETE FROM assessment_sessions").catch(() => {});
     await db.query("DELETE FROM soldiers");
     await db.query("DELETE FROM exam_items").catch(() => {});
     await db.query("DELETE FROM exams");
     await db.query("DELETE FROM announcements");
-    await db.query("DELETE FROM specialties");
-    await db.query("DELETE FROM weapons");
-    await db.query("DELETE FROM ranks");
-    await db.query("DELETE FROM rank_types");
-    await db.query("DELETE FROM fitness_exercises");
     await db.query("DELETE FROM notifications");
-    res.json({ message: "✅ تم حذف جميع البيانات" });
+    await db.query("DELETE FROM import_logs").catch(() => {});
+    await db.query("INSERT INTO weapons(name,icon)VALUES('المشاة','🔫'),('المدرعات','🛡️'),('المدفعية','💣'),('الإشارة','📡'),('المهندسين','🔧') ON CONFLICT DO NOTHING");
+    await db.query("INSERT INTO rank_types(name,color)VALUES('ضباط','#C9A84C'),('صف ضباط','#9CAF88'),('جنود','#2D6A4F') ON CONFLICT DO NOTHING");
+    await db.query(`WITH rt AS (SELECT id FROM rank_types WHERE name='ضباط' LIMIT 1), srt AS (SELECT id FROM rank_types WHERE name='صف ضباط' LIMIT 1), jrt AS (SELECT id FROM rank_types WHERE name='جنود' LIMIT 1) INSERT INTO ranks(name,type_id,sort_order) SELECT v.name,v.tid,v.so FROM (VALUES('جندي',(SELECT id FROM jrt),1),('جندي أول',(SELECT id FROM jrt),2),('عريف',(SELECT id FROM srt),3),('وكيل رقيب',(SELECT id FROM srt),4),('رقيب',(SELECT id FROM srt),5),('رقيب أول',(SELECT id FROM srt),6),('مساعد',(SELECT id FROM srt),7),('مساعد أول',(SELECT id FROM srt),8),('ملازم',(SELECT id FROM rt),9),('ملازم أول',(SELECT id FROM rt),10),('نقيب',(SELECT id FROM rt),11),('رائد',(SELECT id from rt),12),('مقدم',(SELECT id from rt),13),('عقيد',(SELECT id from rt),14),('عميد',(SELECT id from rt),15),('فريق',(SELECT id from rt),16),('فريق أول',(SELECT id from rt),17)) AS v(name,tid,so) WHERE NOT EXISTS (SELECT 1 FROM ranks WHERE ranks.name = v.name)`);
+    res.json({ message: "✅ تم حذف جميع البيانات (مع الحفاظ على الرتب والأسلحة والتخصصات)" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -3224,10 +3230,28 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
     const ranks = rankRows.rows;
     const normRank = (n) => normalizeArabic(String(n)).replace(/\s+/g, "");
     const rankByNorm = new Map(ranks.map(r => [normRank(r.name), r.id]));
-    function resolveRankId(rankName) {
+    const rankCreated = new Map(); // normName → id of ranks created this run
+    // Last resort: create the rank in the DB so no soldier loses their rank
+    // (mirrors how specialties are created on the fly). Only called inside
+    // the transaction, so it uses `client`.
+    async function createRank(name) {
+      const ins = await client.query("INSERT INTO ranks(name, sort_order) VALUES($1, 0) ON CONFLICT DO NOTHING RETURNING id", [name]);
+      if (ins.rows.length > 0) {
+        rankByNorm.set(normRank(name), ins.rows[0].id);
+        ranks.push({ id: ins.rows[0].id, name });
+        return ins.rows[0].id;
+      }
+      const re = await client.query("SELECT id FROM ranks WHERE name = $1", [name]);
+      if (re.rows.length > 0) {
+        rankByNorm.set(normRank(name), re.rows[0].id);
+        return re.rows[0].id;
+      }
+      return null;
+    }
+    async function resolveRankId(rankName) {
       if (!rankName) return null;
       const name = String(rankName).trim();
-      if (!ranks.length) return null;
+      if (!name) return null;
       const n = normRank(name);
       if (rankByNorm.has(n)) return rankByNorm.get(n);
       let hit = ranks.find(r => { const rn = normRank(r.name); return rn.startsWith(n) && rn.length > n.length; });
@@ -3243,7 +3267,10 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
           if (hit) return hit.id;
         }
       }
-      return null;
+      if (rankCreated.has(n)) return rankCreated.get(n);
+      const id = await createRank(name);
+      if (id) rankCreated.set(n, id);
+      return id;
     }
 
     // ---- Specialty resolution (in-memory, inserts only for brand-new names) ----
@@ -3311,7 +3338,7 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
       const soldierInsertParams = [];
       for (const [tempId, info] of tempIdSoldiers) {
         if (tempIdToSoldierId.has(tempId)) continue;
-        const rankId = resolveRankId(info.rank_from_file);
+        const rankId = await resolveRankId(info.rank_from_file);
         const specialty = specialtyMap.get(tempId) || info.detected_specialty || null;
         const specId = specialty ? specByName.get(String(specialty).trim()) : null;
         soldierInsertParams.push(info.name, tempId, rankId, specialty, specId);
@@ -3362,7 +3389,7 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
         if (!soldierId) continue;
         const fileRank = result.rank_from_file;
         const specName = specialtyMap.get(soldierId) || result.detected_specialty || null;
-        const rankId = resolveRankId(fileRank);
+        const rankId = await resolveRankId(fileRank);
         const specId = specName ? specByName.get(String(specName).trim()) : null;
         if (!rankId && !specName) continue;
         const prev = soldierUpdates.get(soldierId);
