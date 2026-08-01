@@ -111,6 +111,7 @@ async function runMigrations() {
   await db.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS enlistment_date DATE");
   await db.query("ALTER TABLE soldiers ADD COLUMN IF NOT EXISTS temp_id VARCHAR(50)");
   try { await db.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_soldiers_temp_id ON soldiers(temp_id) WHERE temp_id IS NOT NULL"); } catch(e){}
+  try { await db.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_ranks_name ON ranks(name)"); } catch (e) {}
   await db.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS focus_points TEXT[] DEFAULT '{}'");
   await db.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS max_score NUMERIC(5,2) DEFAULT 100");
   await db.query("ALTER TABLE exams ADD COLUMN IF NOT EXISTS notes TEXT");
