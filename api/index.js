@@ -147,6 +147,10 @@ async function runMigrations() {
     await db.query("INSERT INTO color_mappings(sheet_type,color_hex,specialty_name) VALUES ('theory','FFFF0000','موجهين'),('theory','FF00B050','مركبات'),('theory','FF00B0F0','إشارة'),('theory','FFFFFF00','إستطلاع'),('fitness','FFFF0000','عمال توجيه'),('fitness','FFFFC000','إستطلاع'),('fitness','FF00B0F0','إشارة'),('fitness','FF00B050','سائقين') ON CONFLICT (sheet_type,color_hex) DO NOTHING");
   } catch (e) {}
   await db.query("CREATE TABLE IF NOT EXISTS import_logs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), filename VARCHAR(500), imported_by UUID REFERENCES users(id), imported_by_name VARCHAR(150), worksheets_detected INT DEFAULT 0, sessions_detected INT DEFAULT 0, sessions_inserted INT DEFAULT 0, sessions_updated INT DEFAULT 0, employees_detected INT DEFAULT 0, date_groups_detected INT DEFAULT 0, validation_errors INT DEFAULT 0, processing_time_ms INT DEFAULT 0, status VARCHAR(20) DEFAULT 'success', error_details JSONB DEFAULT '[]', created_at TIMESTAMPTZ DEFAULT NOW())");
+  // 011: Soldier weapon follows their specialty's weapon (idempotent backfill + guard)
+  try {
+    await db.query("UPDATE soldiers s SET weapon_id = sp.weapon_id FROM specialties sp WHERE sp.id = s.specialty_id AND sp.weapon_id IS NOT NULL AND s.weapon_id IS DISTINCT FROM sp.weapon_id");
+  } catch (e) {}
   console.log("Migrations done");
 }
 
@@ -513,13 +517,17 @@ sl.post("/", auth, async (req, res) => {
       notes,
     } = req.body;
     if (!name) return res.status(400).json({ error: "يرجى إدخال الاسم" });
+    const { rows: specRow } = specialtyId
+      ? await db.query("SELECT weapon_id FROM specialties WHERE id=$1", [specialtyId])
+      : { rows: [] };
+    const effWeapon = weaponId || (specRow.length ? specRow[0].weapon_id : null) || null;
     const { rows } = await db.query(
       "INSERT INTO soldiers(name,military_id,rank_id,weapon_id,specialty_id,specific_specialty,notes) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
       [
         name,
         militaryId || null,
         rankId || null,
-        weaponId || null,
+        effWeapon,
         specialtyId || null,
         specificSpecialty || null,
         notes || null,
@@ -541,13 +549,17 @@ sl.put("/:id", auth, async (req, res) => {
       specificSpecialty,
       notes,
     } = req.body;
+    const { rows: specRow } = specialtyId
+      ? await db.query("SELECT weapon_id FROM specialties WHERE id=$1", [specialtyId])
+      : { rows: [] };
+    const effWeapon = weaponId || (specRow.length ? specRow[0].weapon_id : null) || null;
     const { rows } = await db.query(
       "UPDATE soldiers SET name=$1,military_id=$2,rank_id=$3,weapon_id=$4,specialty_id=$5,specific_specialty=$6,notes=$7 WHERE id=$8 RETURNING *",
       [
         name,
         militaryId || null,
         rankId || null,
-        weaponId || null,
+        effWeapon,
         specialtyId || null,
         specificSpecialty || null,
         notes || null,
@@ -3415,6 +3427,18 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
            FROM (VALUES ${updRows.join(",")}) AS v(rank_id, spec_name, spec_id, sid)
            WHERE soldiers.id = v.sid`,
           updParams
+        );
+      }
+
+      // Weapon always follows the soldier's specialty (no invented data)
+      const weaponSyncIds = [
+        ...[...soldierUpdates.keys()],
+        ...[...tempIdToSoldierId.values()],
+      ].filter(Boolean);
+      if (weaponSyncIds.length > 0) {
+        await client.query(
+          "UPDATE soldiers s SET weapon_id = sp.weapon_id FROM specialties sp WHERE sp.id = s.specialty_id AND sp.weapon_id IS NOT NULL AND s.weapon_id IS DISTINCT FROM sp.weapon_id AND s.id = ANY($1::uuid[])",
+          [weaponSyncIds]
         );
       }
 
