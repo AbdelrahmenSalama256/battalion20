@@ -231,8 +231,10 @@ function getBlockLabels(worksheet, dg, dateRow, fallbackLabels) {
   const labels = [];
   for (let c = dg.startCol; c <= dg.endCol; c++) {
     let label = "";
-    // Scan downward: prefer the LOWEST non-empty label (most specific sub-header).
+    // Scan downward: prefer the LOWEST non-empty label (most specific sub-header),
+    // but stop at the first data row — score values must never become labels.
     for (let r = dateRow + 1; r <= Math.min(dateRow + 3, worksheet.rowCount); r++) {
+      if (isDataRow(worksheet, r)) break;
       const v = toStr(cellVal(worksheet.getCell(r, c)));
       if (v) label = v;
     }
@@ -246,8 +248,6 @@ function getBlockLabels(worksheet, dg, dateRow, fallbackLabels) {
     let lbl = labels[i];
     if (!lbl && fallbackLabels && fallbackLabels[i]) lbl = fallbackLabels[i];
     if (!lbl) lbl = `عمود_${i + 1}`;
-    // Numeric sub-headers (1,2,3) → مهمة_N for cabin-style sheets
-    if (/^\d+$/.test(lbl)) lbl = `مهمة_${lbl}`;
     result.push(lbl);
   }
   return result;
@@ -340,7 +340,9 @@ function parseCabinSheet(worksheet) {
       const scoreDetails = {};
       tasks.forEach((t, i) => {
         if (t !== null) {
-          const lbl = labels[i] || `مهمة_${i + 1}`;
+          let lbl = labels[i] || `مهمة_${i + 1}`;
+          // Numeric sub-headers (1,2,3) → مهمة_N for cabin-style sheets
+          if (/^\d+$/.test(lbl)) lbl = `مهمة_${lbl}`;
           // "المتوسط" column inside tasks (unusual) → treat as avg
           if (/متوسط|average|avg/i.test(lbl)) avg = t;
           else scoreDetails[lbl] = t;
@@ -414,7 +416,9 @@ function parseTheorySheet(worksheet) {
       for (let i = 0; i < dg.span; i++) {
         const col = dg.startCol + i;
         const raw = cellVal(worksheet.getCell(r, col));
-        const label = labels[i] || `عمود_${i + 1}`;
+        let label = labels[i] || `عمود_${i + 1}`;
+        // Numeric sub-header = exam max score ("10", "30") → score column
+        if (/^\d+$/.test(label)) label = "الدرجة";
         const num = toNum(raw);
         const str = toStr(raw);
 
@@ -620,6 +624,9 @@ async function parseTestResults(buffer) {
     }
 
     sheetInfo.resultsCount = parsed.length;
+    if (parsed.length === 0) {
+      warnings.push(`الورقة "${worksheet.name}" (${sheetInfo.type}) — تم التعرف عليها لكن لا توجد درجات رقمية في خلاياها.`);
+    }
     allResults.push(...parsed);
     sheets.push(sheetInfo);
   }
