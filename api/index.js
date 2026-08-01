@@ -141,6 +141,11 @@ async function runMigrations() {
   try { await db.query("CREATE INDEX IF NOT EXISTS idx_assessment_sessions_date ON assessment_sessions(assessment_date)"); } catch (e) {}
   await db.query("CREATE TABLE IF NOT EXISTS assessment_values (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id UUID REFERENCES assessment_sessions(id) ON DELETE CASCADE, field_key VARCHAR(100) NOT NULL, numeric_value NUMERIC(10,2), text_value TEXT, created_at TIMESTAMPTZ DEFAULT NOW())");
   try { await db.query("CREATE INDEX IF NOT EXISTS idx_assessment_values_session ON assessment_values(session_id)"); } catch (e) {}
+  await db.query("CREATE TABLE IF NOT EXISTS color_mappings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), sheet_type VARCHAR(20) NOT NULL, color_hex VARCHAR(10) NOT NULL, specialty_name VARCHAR(100), created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())");
+  try { await db.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_color_mappings_unique ON color_mappings(sheet_type, color_hex)"); } catch (e) {}
+  try {
+    await db.query("INSERT INTO color_mappings(sheet_type,color_hex,specialty_name) VALUES ('theory','FFFF0000','موجهين'),('theory','FF00B050','مركبات'),('theory','FF00B0F0','إشارة'),('theory','FFFFFF00','إستطلاع'),('fitness','FFFF0000','عمال توجيه'),('fitness','FFFFC000','إستطلاع'),('fitness','FF00B0F0','إشارة'),('fitness','FF00B050','سائقين') ON CONFLICT (sheet_type,color_hex) DO NOTHING");
+  } catch (e) {}
   await db.query("CREATE TABLE IF NOT EXISTS import_logs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), filename VARCHAR(500), imported_by UUID REFERENCES users(id), imported_by_name VARCHAR(150), worksheets_detected INT DEFAULT 0, sessions_detected INT DEFAULT 0, sessions_inserted INT DEFAULT 0, sessions_updated INT DEFAULT 0, employees_detected INT DEFAULT 0, date_groups_detected INT DEFAULT 0, validation_errors INT DEFAULT 0, processing_time_ms INT DEFAULT 0, status VARCHAR(20) DEFAULT 'success', error_details JSONB DEFAULT '[]', created_at TIMESTAMPTZ DEFAULT NOW())");
   console.log("Migrations done");
 }
@@ -2743,6 +2748,247 @@ app.get("/api/import-logs", auth, commanderOnly, async (req, res) => {
 });
 
 // ============================================================
+// MISSING DATA — what's missing from the sheet for every soldier
+// ============================================================
+
+/**
+ * GET /api/missing-data
+ * Analyzes the DB and returns per-soldier missing items + overall quality score.
+ * Missing types: rank, specialty, military_id, cabin/theory/fitness test, scores within tests.
+ */
+app.get("/api/missing-data", auth, async (req, res) => {
+  try {
+    // All test types ever seen in assessment_sessions (dynamic — nothing hardcoded)
+    const { rows: typeRows } = await db.query(
+      "SELECT DISTINCT session_type FROM assessment_sessions"
+    );
+    const allTypes = typeRows.map(r => r.session_type);
+
+    // Soldiers with their sessions + value counts + rank/specialty info
+    const { rows: soldiers } = await db.query(
+      `SELECT s.id, s.name, s.military_id, s.temp_id, s.rank_id, s.specialty_id, s.specific_specialty,
+              r.name AS rank_name,
+              sp.name AS specialty_name
+       FROM soldiers s
+       LEFT JOIN ranks r ON s.rank_id = r.id
+       LEFT JOIN specialties sp ON s.specialty_id = sp.id
+       ORDER BY s.name`
+    );
+
+    const sessionAgg = new Map(); // soldierId → { type → count }
+    for (const s of soldiers) sessionAgg.set(s.id, {});
+
+    const { rows: sessions } = await db.query(
+      "SELECT soldier_id, session_type, COUNT(*)::int AS cnt FROM assessment_sessions GROUP BY soldier_id, session_type"
+    );
+    for (const s of sessions) {
+      const agg = sessionAgg.get(s.soldier_id) || {};
+      agg[s.session_type] = s.cnt;
+      sessionAgg.set(s.soldier_id, agg);
+    }
+
+    // Value-level: for each session, count numeric vs text fields (missing scores = sessions with no numeric values)
+    const { rows: valueRows } = await db.query(
+      `SELECT av.session_id,
+              COUNT(av.id)::int AS total_values,
+              COUNT(av.numeric_value)::int AS numeric_values,
+              COUNT(av.text_value)::int AS text_values
+       FROM assessment_values av
+       GROUP BY av.session_id`
+    );
+    const valueAgg = new Map(); // sessionId → { total, numeric, text }
+    for (const v of valueRows) valueAgg.set(v.session_id, v);
+
+    const { rows: sessionRows } = await db.query(
+      "SELECT id, soldier_id, session_type FROM assessment_sessions"
+    );
+    const sessionTypeBySoldier = new Map(); // soldierId → [{session_type, hasNumbers, valueCount}]
+    for (const s of sessionRows) {
+      if (!sessionTypeBySoldier.has(s.soldier_id)) sessionTypeBySoldier.set(s.soldier_id, []);
+      const va = valueAgg.get(s.id) || { total_values: 0, numeric_values: 0, text_values: 0 };
+      sessionTypeBySoldier.get(s.soldier_id).push({
+        session_type: s.session_type,
+        hasNumbers: va.numeric_values > 0,
+        valueCount: va.total_values,
+      });
+    }
+
+    const soldiersMissing = [];
+    let totalChecks = 0;
+    let passedChecks = 0;
+
+    const addMissing = (soldier, item, detail = "") => {
+      soldiersMissing.push({ soldier_id: soldier.id, name: soldier.name, item, detail });
+    };
+
+    for (const s of soldiers) {
+      const present = sessionAgg.get(s.id) || {};
+      const typeDetails = sessionTypeBySoldier.get(s.id) || [];
+      const hasTemp = !!s.temp_id;
+      const missing = [];
+
+      totalChecks += 5;
+      passedChecks += s.rank_id ? 1 : 0;
+      passedChecks += s.specialty_id || s.specific_specialty ? 1 : 0;
+      passedChecks += s.military_id ? 1 : 0;
+      passedChecks += 1; // name always present
+      passedChecks += Object.keys(present).length > 0 ? 1 : 0;
+
+      if (!s.rank_id) missing.push("الرتبة");
+      if (!s.specialty_id && !s.specific_specialty) missing.push("التخصص");
+      if (!s.military_id && !hasTemp) missing.push("الرقم العسكري");
+
+      for (const t of allTypes) {
+        totalChecks += 1;
+        if (!present[t]) {
+          passedChecks += 0;
+          missing.push(`اختبار ${t} بالكامل`);
+        } else {
+          passedChecks += 1;
+        }
+      }
+
+      // Score-level: session exists but has no numeric values → missing scores
+      const scoreMissingTypes = typeDetails.filter(td => !td.hasNumbers).map(td => td.session_type);
+      for (const t of scoreMissingTypes) {
+        totalChecks += 1;
+        passedChecks += 0;
+        missing.push(`درجات ${t}`);
+      }
+      if (scoreMissingTypes.length === 0 && typeDetails.length > 0) passedChecks += typeDetails.length;
+
+      if (missing.length > 0) {
+        for (const m of missing) addMissing(s, m);
+      }
+    }
+
+    const qualityScore = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 100;
+
+    // Group by item for the summary view
+    const byItem = {};
+    for (const m of soldiersMissing) {
+      byItem[m.item] = (byItem[m.item] || 0) + 1;
+    }
+
+    res.json({
+      qualityScore,
+      totalSoldiers: soldiers.length,
+      missingCount: soldiersMissing.length,
+      items: soldiersMissing,
+      byItem,
+      allTypes,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// HEALTH MONITOR — DB health, duplicates, broken relations, import errors
+// ============================================================
+
+/**
+ * GET /api/health/overview
+ * Returns system health: DB connectivity, duplicates, orphans, nulls, import logs.
+ */
+app.get("/api/health/overview", auth, commanderOnly, async (req, res) => {
+  try {
+    // Sequential queries (pool max:1 — parallel would queue and time out)
+    const dbOk = await db.query("SELECT 1 AS ok").then(() => true).catch(() => false);
+    const dupRows = await db.query(`SELECT military_id, COUNT(*)::int AS cnt FROM soldiers
+                WHERE military_id IS NOT NULL AND military_id != ''
+                GROUP BY military_id HAVING COUNT(*) > 1`);
+    const orphanRows = await db.query(`SELECT
+          (SELECT COUNT(*) FROM assessment_sessions s WHERE NOT EXISTS (SELECT 1 FROM soldiers sl WHERE sl.id = s.soldier_id))::int AS orphan_sessions,
+          (SELECT COUNT(*) FROM assessment_values v WHERE NOT EXISTS (SELECT 1 FROM assessment_sessions s WHERE s.id = v.session_id))::int AS orphan_values`);
+    const nullRows = await db.query(`SELECT
+          (SELECT COUNT(*) FROM soldiers WHERE rank_id IS NULL)::int AS no_rank,
+          (SELECT COUNT(*) FROM soldiers WHERE specialty_id IS NULL AND specific_specialty IS NULL)::int AS no_specialty,
+          (SELECT COUNT(*) FROM soldiers WHERE military_id IS NULL)::int AS no_military_id`);
+    const importLogs = await db.query("SELECT * FROM import_logs ORDER BY created_at DESC LIMIT 10");
+    const soldierCount = await db.query("SELECT COUNT(*)::int AS c FROM soldiers");
+    const sessionCount = await db.query("SELECT COUNT(*)::int AS c FROM assessment_sessions");
+    const valueCount = await db.query("SELECT COUNT(*)::int AS c FROM assessment_values");
+    const specCount = await db.query("SELECT COUNT(*)::int AS c FROM specialties");
+
+    res.json({
+      database: dbOk ? "ok" : "error",
+      counts: {
+        soldiers: soldierCount.rows[0].c,
+        sessions: sessionCount.rows[0].c,
+        values: valueCount.rows[0].c,
+        specialties: specCount.rows[0].c,
+      },
+      duplicates: {
+        by_military_id: dupRows.rows,
+      },
+      orphans: orphanRows.rows[0],
+      nulls: nullRows.rows[0],
+      importLogs: importLogs.rows,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// COLOR MAPPINGS — Settings page (color hex → specialty, per sheet type)
+// ============================================================
+
+/**
+ * GET /api/settings/color-mappings
+ * List all color→specialty mappings (optionally filtered by sheet_type).
+ * Also returns the auto-detected colors from the last import (import_logs metadata).
+ */
+app.get("/api/settings/color-mappings", auth, async (req, res) => {
+  try {
+    const { sheet_type } = req.query;
+    const sql = sheet_type
+      ? "SELECT * FROM color_mappings WHERE sheet_type=$1 ORDER BY color_hex"
+      : "SELECT * FROM color_mappings ORDER BY sheet_type, color_hex";
+    const params = sheet_type ? [sheet_type] : [];
+    const { rows } = await db.query(sql, params);
+    res.json({ mappings: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /api/settings/color-mappings
+ * Body: { sheet_type, color_hex, specialty_name } — create/update a mapping.
+ */
+app.post("/api/settings/color-mappings", auth, commanderOnly, async (req, res) => {
+  try {
+    const { sheet_type, color_hex, specialty_name } = req.body;
+    if (!sheet_type || !color_hex) return res.status(400).json({ error: "sheet_type و color_hex مطلوبان" });
+    const hex = String(color_hex).toUpperCase();
+    const { rows } = await db.query(
+      `INSERT INTO color_mappings(sheet_type,color_hex,specialty_name)
+       VALUES($1,$2,$3)
+       ON CONFLICT (sheet_type,color_hex) DO UPDATE SET specialty_name=EXCLUDED.specialty_name, updated_at=NOW()
+       RETURNING *`,
+      [sheet_type, hex, specialty_name || null]
+    );
+    res.json({ mapping: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * DELETE /api/settings/color-mappings/:id
+ */
+app.delete("/api/settings/color-mappings/:id", auth, commanderOnly, async (req, res) => {
+  try {
+    await db.query("DELETE FROM color_mappings WHERE id=$1", [req.params.id]);
+    res.json({ deleted: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
 // TEST RESULTS IMPORT — Parse file + temp_id + intra-run dedup + fuzzy flagging
 // ============================================================
 
@@ -2782,6 +3028,22 @@ app.post("/api/admin/import-test-results", auth, commanderOnly, upload.single("w
     const { rows: soldiers } = await db.query(
       "SELECT s.id, s.name, s.military_id, s.temp_id, r.name as rank_name FROM soldiers s LEFT JOIN ranks r ON s.rank_id = r.id"
     );
+
+    // Load DB color→specialty mappings and re-map each parsed result
+    // (Settings page owns these mappings; supersedes hardcoded parser map)
+    const { rows: dbMappings } = await db.query(
+      "SELECT sheet_type, color_hex, specialty_name FROM color_mappings"
+    );
+    const mappingBySheetHex = new Map(); // `${sheet_type}|${hex}` → specialty_name
+    for (const m of dbMappings) {
+      if (m.specialty_name) mappingBySheetHex.set(`${m.sheet_type}|${m.color_hex.toUpperCase()}`, m.specialty_name);
+    }
+    for (const r of parseResult.results) {
+      if (r.detected_color_hex) {
+        const mapped = mappingBySheetHex.get(`${r.test_type}|${r.detected_color_hex}`);
+        if (mapped) r.detected_specialty = mapped;
+      }
+    }
 
     // Build normalized name → soldier(s) lookup for existing DB
     const normMap = new Map();
@@ -2899,6 +3161,7 @@ app.post("/api/admin/import-test-results", auth, commanderOnly, upload.single("w
       },
       results,
       sheets: parseResult.sheets,
+      colors: parseResult.colors || [],
       warnings: parseResult.warnings,
       errors: parseResult.errors,
     });
@@ -2954,6 +3217,63 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
 
     const { normalizeArabic } = require("./name-matcher");
 
+    // ---- Fuzzy rank resolution helper ----
+    // File ranks are abbreviated ("رقيب أ", "مساعد أ") — match by normalized
+    // name, then by prefix, and expand common abbreviations.
+    const RANK_EXPANSIONS = {
+      "أ": "أول", "ا": "أول", "الاول": "أول", "الأول": "أول",
+      "ث": "ثاني", "ثان": "ثاني",
+    };
+    async function resolveRankId(rankName) {
+      if (!rankName) return null;
+      const name = String(rankName).trim();
+      const { rows } = await db.query("SELECT id, name FROM ranks");
+      if (!rows.length) return null;
+      const norm = n => normalizeArabic(n).replace(/\s+/g, "");
+      // 1. exact normalized
+      let hit = rows.find(r => norm(r.name) === norm(name));
+      if (hit) return hit.id;
+      // 2. prefix: file rank is the start of a DB rank (e.g. "رقيب" → "رقيب أول")
+      hit = rows.find(r => norm(r.name).startsWith(norm(name)) && norm(r.name).length > norm(name).length);
+      if (hit) return hit.id;
+      // 3. expand abbreviations: "رقيب أ" → "رقيب أول"
+      const parts = name.split(/\s+/);
+      if (parts.length >= 2) {
+        const last = parts[parts.length - 1];
+        const exp = RANK_EXPANSIONS[norm(last)] || RANK_EXPANSIONS[last.replace(/[\u064B-\u065F]/g, "")];
+        if (exp) {
+          const expanded = [...parts.slice(0, -1), exp].join(" ");
+          hit = rows.find(r => norm(r.name) === norm(expanded));
+          if (hit) return hit.id;
+          hit = rows.find(r => norm(r.name).startsWith(norm(expanded)));
+          if (hit) return hit.id;
+        }
+      }
+      return null;
+    }
+
+    // ---- Specialty find-or-create helper ----
+    async function resolveSpecialtyId(specialtyName) {
+      if (!specialtyName) return null;
+      const name = String(specialtyName).trim();
+      const { rows } = await db.query("SELECT id FROM specialties WHERE name = $1", [name]);
+      if (rows.length > 0) return rows[0].id;
+      const ins = await db.query("INSERT INTO specialties(name) VALUES($1) ON CONFLICT DO NOTHING RETURNING id", [name]);
+      if (ins.rows.length > 0) return ins.rows[0].id;
+      const re = await db.query("SELECT id FROM specialties WHERE name = $1", [name]);
+      return re.rows[0]?.id || null;
+    }
+
+    // ---- Rank fuzzy match against existing DB soldiers (update their rank too) ----
+    const rankCache = new Map(); // fileRankName → rank_id
+    async function cachedRankId(fileRank) {
+      if (!fileRank) return null;
+      if (rankCache.has(fileRank)) return rankCache.get(fileRank);
+      const id = await resolveRankId(fileRank);
+      rankCache.set(fileRank, id);
+      return id;
+    }
+
     // Collect unique temp_ids that need new soldier records
     const tempIdSoldiers = new Map(); // temp_id → { name, rank_from_file, detected_specialty }
     for (const r of results) {
@@ -2992,17 +3312,14 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
       // Create temp_id soldier records
       for (const [tempId, info] of tempIdSoldiers) {
         try {
-          // Resolve rank_id from rank name
-          let rankId = null;
-          if (info.rank_from_file) {
-            const rankRes = await client.query("SELECT id FROM ranks WHERE name = $1 LIMIT 1", [info.rank_from_file]);
-            if (rankRes.rows.length > 0) rankId = rankRes.rows[0].id;
-          }
+          // Resolve rank_id from rank name (fuzzy)
+          const rankId = await cachedRankId(info.rank_from_file);
 
           const specialty = specialtyMap.get(tempId) || info.detected_specialty || null;
+          const specId = await resolveSpecialtyId(specialty);
           const insRes = await client.query(
-            "INSERT INTO soldiers(name, temp_id, rank_id, specific_specialty) VALUES($1, $2, $3, $4) RETURNING id, temp_id, name",
-            [info.name, tempId, rankId, specialty]
+            "INSERT INTO soldiers(name, temp_id, rank_id, specific_specialty, specialty_id) VALUES($1, $2, $3, $4, $5) RETURNING id, temp_id, name",
+            [info.name, tempId, rankId, specialty, specId]
           );
           createdSoldiers.push({ temp_id: tempId, soldier_id: insRes.rows[0].id, name: info.name });
           soldiersCreated++;
@@ -3034,7 +3351,11 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
       for (const sc of (specialty_confirmations || [])) {
         if (sc.soldier_id && sc.specialty) {
           try {
-            await client.query("UPDATE soldiers SET specific_specialty = $1 WHERE id = $2", [sc.specialty, sc.soldier_id]);
+            const specId = await resolveSpecialtyId(sc.specialty);
+            await client.query(
+              "UPDATE soldiers SET specific_specialty = $1, specialty_id = $2 WHERE id = $3",
+              [sc.specialty, specId, sc.soldier_id]
+            );
           } catch (e) { /* non-fatal */ }
         }
       }
@@ -3055,7 +3376,26 @@ app.post("/api/admin/confirm-test-results", auth, commanderOnly, async (req, res
             soldierId = tempIdToSoldierId.get(targetTempId) || soldierId;
           }
 
-          if (!soldierId || !result.test_date || !result.test_type || !result.score_details) {
+          if (!soldierId) {
+            errors.push({ name: result.name, error: "بيانات ناقصة — لا يمكن الحفظ" });
+            continue;
+          }
+
+          // Update rank + specialty for the matched soldier (new OR existing)
+          try {
+            const fileRank = result.rank_from_file;
+            const specName = specialtyMap.get(soldierId) || result.detected_specialty || null;
+            const rankId = await cachedRankId(fileRank);
+            const specId = await resolveSpecialtyId(specName);
+            if (rankId || specName) {
+              await client.query(
+                "UPDATE soldiers SET rank_id = COALESCE($1, rank_id), specific_specialty = COALESCE($2, specific_specialty), specialty_id = COALESCE($3, specialty_id) WHERE id = $4",
+                [rankId, specName || null, specId, soldierId]
+              );
+            }
+          } catch (e) { /* non-fatal */ }
+
+          if (!result.test_date || !result.test_type || !result.score_details) {
             errors.push({ name: result.name, error: "بيانات ناقصة — لا يمكن الحفظ" });
             continue;
           }

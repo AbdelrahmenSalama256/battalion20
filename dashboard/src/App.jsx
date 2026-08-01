@@ -10,6 +10,9 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import SectionDetailPage from './pages/SectionDetailPage';
 import SpecialtyDetailPage from './pages/SpecialtyDetailPage';
+import MissingDataPage from './pages/MissingDataPage';
+import SettingsPage from './pages/SettingsPage';
+import HealthPage from './pages/HealthPage';
 import SoldiersPage from './pages/SoldiersPage';
 import SoldierProfilePage from './pages/SoldierProfilePage';
 import NotificationsPage from './pages/NotificationsPage';
@@ -205,6 +208,15 @@ export default function App() {
         } />
         <Route path="/assessments" element={
           <AssessmentsPage user={u} />
+        } />
+        <Route path="/missing-data" element={
+          <MissingDataPage user={u} />
+        } />
+        <Route path="/settings" element={
+          u?.role === 'commander' ? <SettingsPage user={u} /> : <Navigate to="/" />
+        } />
+        <Route path="/health" element={
+          u?.role === 'commander' ? <HealthPage user={u} /> : <Navigate to="/" />
         } />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

@@ -525,11 +525,18 @@ export default function SoldierProfilePage({ user, onRefresh }) {
                           </td>
                           <td>
                             <div className="d-flex flex-wrap gap-2">
-                              {Object.entries(s.values || {}).map(([key, val]) => (
-                                <span key={key} className="badge bg-dark border border-military">
-                                  {key}: <span className="text-gold">{val}</span>
-                                </span>
-                              ))}
+                              {Object.entries(s.values || {}).map(([key, val]) => {
+                                const isNote = /ملاحظ|note|تعليق/i.test(key);
+                                return isNote ? (
+                                  <span key={key} className="badge bg-warning text-dark border border-military">
+                                    {key}: <span>{val}</span>
+                                  </span>
+                                ) : (
+                                  <span key={key} className="badge bg-dark border border-military">
+                                    {key}: <span className="text-gold">{val}</span>
+                                  </span>
+                                );
+                              })}
                               {Object.keys(s.values || {}).length === 0 && (
                                 <span className="small text-muted-military">—</span>
                               )}

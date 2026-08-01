@@ -221,6 +221,38 @@ function isRowEmpty(worksheet, rowNum) {
   return !hasValue;
 }
 
+/**
+ * Read the sub-header labels for a date group.
+ * Scans rows dateRow+1..dateRow+3 for per-column labels within the group.
+ * Returns array aligned to the group columns: [colLabel, ...] ('' if none).
+ * Falls back to index-based labels when nothing is found.
+ */
+function getBlockLabels(worksheet, dg, dateRow, fallbackLabels) {
+  const labels = [];
+  for (let c = dg.startCol; c <= dg.endCol; c++) {
+    let label = "";
+    // Scan downward: prefer the LOWEST non-empty label (most specific sub-header).
+    for (let r = dateRow + 1; r <= Math.min(dateRow + 3, worksheet.rowCount); r++) {
+      const v = toStr(cellVal(worksheet.getCell(r, c)));
+      if (v) label = v;
+    }
+    labels.push(label);
+  }
+
+  // If a merged label repeats (e.g. "عدد المهام" spanning 3 cols), keep the
+  // more specific labels found below it; otherwise use per-col labels.
+  const result = [];
+  for (let i = 0; i < labels.length; i++) {
+    let lbl = labels[i];
+    if (!lbl && fallbackLabels && fallbackLabels[i]) lbl = fallbackLabels[i];
+    if (!lbl) lbl = `عمود_${i + 1}`;
+    // Numeric sub-headers (1,2,3) → مهمة_N for cabin-style sheets
+    if (/^\d+$/.test(lbl)) lbl = `مهمة_${lbl}`;
+    result.push(lbl);
+  }
+  return result;
+}
+
 // ============================================================
 // SHEET 1: CABIN TESTS (كابينه)
 // ============================================================
@@ -288,6 +320,8 @@ function parseCabinSheet(worksheet) {
         blockCols.push(toNum(cellVal(worksheet.getCell(r, c))));
       }
 
+      const labels = getBlockLabels(worksheet, dg, dateRow, ["مهمة_1", "مهمة_2", "مهمة_3", "المتوسط"]);
+
       if (blockCols.length >= 4) {
         tasks.push(blockCols[0], blockCols[1], blockCols[2]);
         avg = blockCols[3]; // "المتوسط" — imported exactly as stored
@@ -304,7 +338,14 @@ function parseCabinSheet(worksheet) {
       if (!hasData) continue;
 
       const scoreDetails = {};
-      tasks.forEach((t, i) => { if (t !== null) scoreDetails[`مهمة_${i + 1}`] = t; });
+      tasks.forEach((t, i) => {
+        if (t !== null) {
+          const lbl = labels[i] || `مهمة_${i + 1}`;
+          // "المتوسط" column inside tasks (unusual) → treat as avg
+          if (/متوسط|average|avg/i.test(lbl)) avg = t;
+          else scoreDetails[lbl] = t;
+        }
+      });
       if (avg !== null) scoreDetails["المتوسط"] = Math.round(avg * 100) / 100;
 
       results.push({
@@ -366,15 +407,25 @@ function parseTheorySheet(worksheet) {
     const colorInfo = nameColor.colorHex ? nameColor : rankColor;
 
     for (const dg of dateGroups) {
-      const scoreRaw = toNum(cellVal(worksheet.getCell(r, dg.startCol)));
-      const notesRaw = cellVal(worksheet.getCell(r, dg.startCol + 1));
-      const notes = notesRaw !== null && notesRaw !== undefined ? toStr(notesRaw) : null;
-
-      if (scoreRaw === null && !notes) continue;
-
+      // Read ALL columns in the block with their discovered labels
+      const labels = getBlockLabels(worksheet, dg, dateRow, ["الدرجة", "ملاحظات"]);
       const scoreDetails = {};
-      if (scoreRaw !== null) scoreDetails["الدرجة"] = scoreRaw;
-      if (notes) scoreDetails["ملاحظات"] = notes;
+
+      for (let i = 0; i < dg.span; i++) {
+        const col = dg.startCol + i;
+        const raw = cellVal(worksheet.getCell(r, col));
+        const label = labels[i] || `عمود_${i + 1}`;
+        const num = toNum(raw);
+        const str = toStr(raw);
+
+        if (num !== null) {
+          scoreDetails[label] = num;
+        } else if (str) {
+          scoreDetails[label] = str;
+        }
+      }
+
+      if (Object.keys(scoreDetails).length === 0) continue;
 
       results.push({
         name,
@@ -451,6 +502,7 @@ function parseFitnessSheet(worksheet) {
     const colorInfo = nameColor.colorHex ? nameColor : rankColor;
 
     for (const dg of dateGroups) {
+      const labels = getBlockLabels(worksheet, dg, dateRow, FITNESS_LABELS);
       const blockValues = [];
       for (let c = dg.startCol; c <= dg.endCol; c++) {
         blockValues.push(toNum(cellVal(worksheet.getCell(r, c))));
@@ -461,8 +513,8 @@ function parseFitnessSheet(worksheet) {
 
       const scoreDetails = {};
       blockValues.forEach((v, i) => {
-        if (v !== null && i < FITNESS_LABELS.length) {
-          scoreDetails[FITNESS_LABELS[i]] = v;
+        if (v !== null) {
+          scoreDetails[labels[i] || FITNESS_LABELS[i] || `مقياس_${i + 1}`] = v;
         }
       });
 
@@ -593,7 +645,54 @@ async function parseTestResults(buffer) {
     totalCount: deduped.length,
     errors,
     warnings,
+    colors: collectWorkbookColors(workbook),
   };
 }
 
-module.exports = { parseTestResults, detectSheetType, SPECIALTY_COLORS, extractSpecialtyFromCell };
+/**
+ * Auto-discover every distinct fill color used in the workbook (per sheet).
+ * Returns: [{ sheet, sheetType, colorHex, count, exampleSpecialty }]
+ * This is what feeds the Settings page color→specialty mapping UI.
+ */
+function collectWorkbookColors(workbook) {
+  const out = [];
+  const seen = new Set();
+  for (const worksheet of workbook.worksheets) {
+    if (worksheet.state === "hidden") continue;
+    const type = detectSheetType(worksheet);
+    const counts = {};
+    let totalFilled = 0;
+    // Scan the identity columns (1-3) and score columns of data rows only
+    for (let r = 1; r <= worksheet.rowCount; r++) {
+      const name = toStr(cellVal(worksheet.getCell(r, 3)));
+      const serial = toNum(cellVal(worksheet.getCell(r, 1)));
+      if (!name || serial === null) continue;
+      for (let c = 1; c <= Math.min(worksheet.columnCount, 3); c++) {
+        const cell = worksheet.getCell(r, c);
+        const fill = cell && cell.fill;
+        if (fill && fill.type === "pattern" && fill.fgColor && fill.fgColor.argb) {
+          const hex = fill.fgColor.argb.toUpperCase();
+          counts[hex] = (counts[hex] || 0) + 1;
+          totalFilled++;
+        }
+      }
+    }
+    for (const [hex, count] of Object.entries(counts)) {
+      const key = `${type}|${hex}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const known = (SPECIALTY_COLORS[type] || {})[hex];
+      out.push({
+        sheet: worksheet.name,
+        sheetType: type,
+        colorHex: hex,
+        count,
+        totalFilled,
+        mappedSpecialty: known || null,
+      });
+    }
+  }
+  return out;
+}
+
+module.exports = { parseTestResults, detectSheetType, SPECIALTY_COLORS, extractSpecialtyFromCell, collectWorkbookColors, getBlockLabels };

@@ -218,6 +218,13 @@ export const api = {
   },
   confirmTestResults: (data) => req('POST', '/admin/confirm-test-results', data),
 
+  // Missing data + health + color mappings
+  getMissingData: () => req('GET', '/missing-data'),
+  getHealthOverview: () => req('GET', '/health/overview'),
+  getColorMappings: (sheetType) => req('GET', `/settings/color-mappings${sheetType ? `?sheet_type=${sheetType}` : ''}`),
+  saveColorMapping: (mapping) => req('POST', '/settings/color-mappings', mapping),
+  deleteColorMapping: (id) => req('DELETE', `/settings/color-mappings/${id}`),
+
   // Admin
   seed: () => req('POST', '/admin/seed'),
   clearAll: () => req('POST', '/admin/clear-all'),

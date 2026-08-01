@@ -33,6 +33,26 @@ const ALL_TABS = [
     path: "/manage",
     commanderOnly: true,
   },
+  {
+    id: "missing-data",
+    label: "البيانات الناقصة",
+    icon: "⚠️",
+    path: "/missing-data",
+  },
+  {
+    id: "settings",
+    label: "ألوان التخصصات",
+    icon: "🎨",
+    path: "/settings",
+    commanderOnly: true,
+  },
+  {
+    id: "health",
+    label: "مراقب الصحة",
+    icon: "🩺",
+    path: "/health",
+    commanderOnly: true,
+  },
   { id: "profile", label: "حسابي", icon: "👤", path: "/profile" },
 ];
 
