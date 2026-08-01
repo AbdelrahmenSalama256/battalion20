@@ -29,6 +29,7 @@ export default function SoldierProfilePage({ user, onRefresh }) {
   const navigate = useNavigate();
   const [soldier, setSoldier] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [evalForm, setEvalForm] = useState({ section_key: 'general', score: '', notes: '' });
   const [evalLoading, setEvalLoading] = useState(false);
@@ -41,6 +42,7 @@ export default function SoldierProfilePage({ user, onRefresh }) {
 
   async function loadSoldier() {
     setLoading(true);
+    setLoadError(null);
     try {
       const [data, lvRes] = await Promise.all([
         api.getSoldier(id),
@@ -48,7 +50,10 @@ export default function SoldierProfilePage({ user, onRefresh }) {
       ]);
       setSoldier(data);
       setLeaves(lvRes.leaves || []);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setLoadError(e.message || 'فشل تحميل البيانات');
+    }
     setLoading(false);
   }
 
@@ -91,6 +96,13 @@ export default function SoldierProfilePage({ user, onRefresh }) {
   }
 
   if (loading) return <div className="text-center p-5 text-muted-military">جاري التحميل...</div>;
+  if (loadError) return (
+    <div className="text-center p-5">
+      <div className="text-danger mb-2">حدث خطأ أثناء تحميل بيانات الجندي</div>
+      <div className="small text-muted-military mb-3">{loadError}</div>
+      <button className="btn btn-outline-gold btn-sm" onClick={loadSoldier}>إعادة المحاولة</button>
+    </div>
+  );
   if (!soldier) return <div className="text-center p-5 text-muted-military">الجندي غير موجود</div>;
 
   const status = STATUS_MAP[soldier.status] || STATUS_MAP.active;

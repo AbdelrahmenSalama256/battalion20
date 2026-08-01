@@ -12,7 +12,15 @@ const { WorkbookImportEngine } = require("./workbook-parser");
 const { parseTestResults } = require("./test-results-parser");
 const { classifyMatches } = require("./name-matcher");
 
-const DB_URL = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0] : undefined;
+const rawDbUrl = process.env.DATABASE_URL ? process.env.DATABASE_URL.split("?")[0] : undefined;
+// Supabase pooler: session pooler (port 5432) caps at ~15 concurrent clients —
+// each warm Vercel instance holds one, so the pool saturates and requests fail
+// with EMAXCONNSESSION. The transaction pooler (port 6543) is built for
+// serverless: connections are released after each statement/transaction, so the
+// limit becomes the DB max_connections (~60). Switch automatically.
+const DB_URL = rawDbUrl && /pooler\.supabase\.com:5432/.test(rawDbUrl)
+  ? rawDbUrl.replace(/:5432/, ":6543")
+  : rawDbUrl;
 const isLocal = DB_URL && DB_URL.includes("localhost");
 function retryQuery(fn, retries = 3, delay = 500) {
   return fn().catch(async (err) => {

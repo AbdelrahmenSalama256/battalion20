@@ -13,6 +13,7 @@ export default function SpecialtyDetailPage({ user }) {
   const navigate = useNavigate();
   const [specialty, setSpecialty] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     loadSpecialty();
@@ -20,16 +21,25 @@ export default function SpecialtyDetailPage({ user }) {
 
   async function loadSpecialty() {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await api.getSpecialty(id);
       setSpecialty(data);
     } catch (e) {
       console.error(e);
+      setLoadError(e.message || 'فشل تحميل البيانات');
     }
     setLoading(false);
   }
 
   if (loading) return <div className="text-center p-5 text-muted-military">جاري التحميل...</div>;
+  if (loadError) return (
+    <div className="text-center p-5">
+      <div className="text-danger mb-2">حدث خطأ أثناء تحميل التخصص</div>
+      <div className="small text-muted-military mb-3">{loadError}</div>
+      <button className="btn btn-outline-gold btn-sm" onClick={loadSpecialty}>إعادة المحاولة</button>
+    </div>
+  );
   if (!specialty) return <div className="text-center p-5 text-muted-military">التخصص غير موجود</div>;
 
   const soldiers = specialty.soldiers || [];
